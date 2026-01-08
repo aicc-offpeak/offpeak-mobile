@@ -10,12 +10,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
 
-  final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  // Android 전용: 카카오 지도 SDK 초기화
+  final appKey = dotenv.env[Env.kakaoNativeAppKey] ?? "";
+  await KakaoMapSdk.instance.initialize(appKey);
 
-  if (isAndroid) {
-    await KakaoMapSdk.instance
-        .initialize(dotenv.env[Env.kakaoNativeAppKey] ?? "");
-  }
+  // 카카오 지도 SDK 초기화 확인: hashKey 출력
+  final hashKey = await KakaoMapSdk.instance.hashKey();
+  debugPrint('[KAKAO_HASH_KEY] $hashKey');
 
-  runApp(OffPeakApp(isMobile: isAndroid));
+  runApp(const OffPeakApp());
 }
