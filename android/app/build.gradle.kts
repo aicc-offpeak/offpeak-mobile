@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -30,7 +32,7 @@ android {
         versionName = flutter.versionName
 
         // 카카오 네이티브 앱 키를 .env 파일에서만 읽기
-        val envProperties = java.util.Properties()
+        val envProperties = Properties()
         val envFile = rootProject.file("../.env")
         if (envFile.exists()) {
             envFile.readLines().forEach { line ->
@@ -43,10 +45,14 @@ android {
                 }
             }
         }
-        
-        val kakaoNativeAppKey = envProperties.getProperty("KAKAO_NATIVE_APP_KEY") ?: ""
 
-        manifestPlaceholders = mapOf("KAKAO_NATIVE_APP_KEY" to kakaoNativeAppKey)
+        val kakaoNativeAppKey = envProperties.getProperty("KAKAO_NATIVE_APP_KEY") ?: ""
+        if (kakaoNativeAppKey.isBlank()) {
+            println("[WARN] KAKAO_NATIVE_APP_KEY is blank. Check ../.env")
+        }
+
+        // Kotlin DSL: manifestPlaceholders is a mutable map; set entries instead of reassigning
+        manifestPlaceholders["KAKAO_NATIVE_APP_KEY"] = kakaoNativeAppKey
     }
 
     buildTypes {
