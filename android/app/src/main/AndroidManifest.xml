@@ -1,8 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ✅ 인터넷 권한 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="offpeak_mobile"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+
+        <!-- ✅ 카카오 네이티브 앱 키 (환경변수에서 주입) -->
+        <meta-data
+            android:name="com.kakao.sdk.AppKey"
+            android:value="${KAKAO_NATIVE_APP_KEY}"/>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

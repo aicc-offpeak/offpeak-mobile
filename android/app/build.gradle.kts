@@ -28,6 +28,25 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // 카카오 네이티브 앱 키를 .env 파일에서만 읽기
+        val envProperties = java.util.Properties()
+        val envFile = rootProject.file("../.env")
+        if (envFile.exists()) {
+            envFile.readLines().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                    val parts = trimmed.split("=", limit = 2)
+                    if (parts.size == 2) {
+                        envProperties[parts[0].trim()] = parts[1].trim()
+                    }
+                }
+            }
+        }
+        
+        val kakaoNativeAppKey = envProperties.getProperty("KAKAO_NATIVE_APP_KEY") ?: ""
+
+        manifestPlaceholders = mapOf("KAKAO_NATIVE_APP_KEY" to kakaoNativeAppKey)
     }
 
     buildTypes {
