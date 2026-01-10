@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'core/constants/routes.dart';
 import 'core/constants/theme.dart';
+import 'data/models/place.dart';
 import 'features/result_map/presentation/result_map_screen.dart';
 import 'features/search/presentation/search_screen.dart';
 import 'shared/widgets/app_scaffold.dart';
@@ -14,12 +15,25 @@ class OffPeakApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'boom.b',
+      title: 'offpeak',
       theme: AppTheme.light,
       initialRoute: Routes.search,
-      routes: {
-        Routes.search: (_) => const AppScaffold(child: SearchScreen()),
-        Routes.resultMap: (_) => const AppScaffold(child: ResultMapScreen()),
+      onGenerateRoute: (settings) {
+        switch (settings.name) {
+          case Routes.search:
+            return MaterialPageRoute(
+              builder: (_) => const AppScaffold(child: SearchScreen()),
+            );
+          case Routes.resultMap:
+            final place = settings.arguments as Place?;
+            return MaterialPageRoute(
+              builder: (_) => ResultMapScreen(selectedPlace: place),
+            );
+          default:
+            return MaterialPageRoute(
+              builder: (_) => const AppScaffold(child: SearchScreen()),
+            );
+        }
       },
     );
   }

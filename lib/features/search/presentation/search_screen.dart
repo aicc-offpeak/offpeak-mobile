@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/routes.dart';
+import '../../../data/models/place.dart';
 import '../state/search_controller.dart' as search;
 import '../widgets/recent_keywords.dart';
 import '../widgets/search_bar.dart';
@@ -70,17 +71,6 @@ class _SearchScreenState extends State<SearchScreen> {
                   _searchController.text = keyword;
                   controller.search(keyword);
                 },
-              ),
-            // 디버깅용: 지도 화면으로 이동 버튼
-            if (_searchController.text.trim().isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushNamed(context, Routes.resultMap);
-                  },
-                  child: const Text('지도 화면으로 이동 (디버깅)'),
-                ),
               ),
             // 나머지 공간
             const Spacer(),
@@ -163,7 +153,11 @@ class _SearchScreenState extends State<SearchScreen> {
               ],
             ),
             onTap: () {
-              // 다음 단계에서 처리
+              Navigator.pushNamed(
+                context,
+                Routes.resultMap,
+                arguments: place,
+              );
             },
           );
         },

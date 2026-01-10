@@ -28,6 +28,18 @@ class Place {
       distanceM: (json['distance_m'] ?? json['distance'] ?? 0).toDouble(),
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'address': address,
+      'lat': latitude,
+      'lng': longitude,
+      'category_name': category,
+      'distance_m': distanceM,
+    };
+  }
 }
 
 

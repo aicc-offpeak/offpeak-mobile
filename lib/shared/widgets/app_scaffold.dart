@@ -9,8 +9,9 @@ class AppScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('boom.b'),
-        centerTitle: false,
+        title: const Text('offpeak'),
+        centerTitle: true,
+        automaticallyImplyLeading: false,
       ),
       body: SafeArea(child: child),
     );
