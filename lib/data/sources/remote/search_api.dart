@@ -9,12 +9,12 @@ import '../../models/search_response.dart';
 class SearchApi {
   SearchApi({HttpClient? client})
       : _client = client ??
-            HttpClient(baseUrl: dotenv.env[Env.apiBaseUrl] ?? 'http://localhost');
+            HttpClient(baseUrl: dotenv.env[Env.apiBaseUrl] ?? 'http://127.0.0.1:8000');
 
   final HttpClient _client;
 
   Future<ApiResult<SearchResponse>> search(SearchRequest request) async {
-    final result = await _client.get('/search', query: request.toQuery());
+    final result = await _client.get('/places/search', query: request.toQuery());
     switch (result) {
       case ApiSuccess<Map<String, dynamic>>(data: final data):
         return ApiSuccess(SearchResponse.fromJson(data));

@@ -19,7 +19,7 @@ class SearchRepository {
   List<String> getRecentKeywords() => _recentStore.load();
 
   Future<ApiResult<SearchResponse>> search(SearchRequest request) async {
-    _recentStore.add(request.keyword);
+    _recentStore.add(request.query);
     final result = await _api.search(request);
     if (result is ApiSuccess<SearchResponse>) {
       logInfo('Search success: ${result.data.places.length} items');

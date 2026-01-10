@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/constants/routes.dart';
-import '../../../shared/widgets/error_view.dart';
-import '../../../shared/widgets/loading.dart';
 import '../state/search_controller.dart' as search;
 import '../widgets/recent_keywords.dart';
 import '../widgets/search_bar.dart';
@@ -16,17 +14,26 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final controller = search.SearchController();
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     controller.loadRecent();
+    controller.initializeLocation();
+    _searchController.addListener(_onSearchChanged);
   }
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
+    _searchController.dispose();
     controller.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    controller.search(_searchController.text);
   }
 
   @override
@@ -37,47 +44,130 @@ class _SearchScreenState extends State<SearchScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            SearchBarWidget(onSubmit: controller.search),
-            // 디버깅용: 지도 화면으로 이동 버튼
+            // 검색창
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pushNamed(context, Routes.resultMap);
-                },
-                child: const Text('지도 화면으로 이동 (디버깅)'),
+              padding: const EdgeInsets.all(16.0),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: '가게 검색',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                ),
               ),
             ),
-            RecentKeywords(
-              keywords: controller.recentKeywords,
-              onTap: controller.search,
-            ),
-            if (controller.isLoading) const LoadingView(),
-            if (controller.error != null)
-              ErrorView(message: controller.error!, onRetry: controller.loadRecent),
-            Expanded(child: _buildResultList()),
+            // 검색창 바로 아래 자동완성 리스트 (검색어가 있을 때만 표시)
+            if (_searchController.text.trim().isNotEmpty) _buildAutocompleteList(),
+            // 검색어가 없을 때만 최근 검색어 표시
+            if (_searchController.text.trim().isEmpty)
+              RecentKeywords(
+                keywords: controller.recentKeywords,
+                onTap: (keyword) {
+                  _searchController.text = keyword;
+                  controller.search(keyword);
+                },
+              ),
+            // 디버깅용: 지도 화면으로 이동 버튼
+            if (_searchController.text.trim().isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushNamed(context, Routes.resultMap);
+                  },
+                  child: const Text('지도 화면으로 이동 (디버깅)'),
+                ),
+              ),
+            // 나머지 공간
+            const Spacer(),
           ],
         );
       },
     );
   }
 
-  Widget _buildResultList() {
-    if (controller.results.isEmpty) {
-      return const Center(child: Text('검색 결과가 없습니다.'));
+  Widget _buildAutocompleteList() {
+    if (controller.isLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        child: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
     }
-    return ListView.builder(
-      itemCount: controller.results.length,
-      itemBuilder: (context, index) {
-        final place = controller.results[index];
-        return ListTile(
-          title: Text(place.name),
-          subtitle: Text(place.address),
-          onTap: () {
-            // TODO: navigate to result map with selected place as focus
-          },
-        );
-      },
+
+    if (controller.error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        child: Text(
+          controller.error!,
+          style: const TextStyle(color: Colors.red),
+        ),
+      );
+    }
+
+    if (controller.results.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        child: Center(
+          child: Text('검색 결과가 없습니다.'),
+        ),
+      );
+    }
+
+    // 최대 5개까지만 표시
+    final displayResults = controller.results.take(5).toList();
+
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 300),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ListView.builder(
+        shrinkWrap: true,
+        itemCount: displayResults.length,
+        itemBuilder: (context, index) {
+          final place = displayResults[index];
+          return ListTile(
+            title: Text(place.name),
+            subtitle: Row(
+              children: [
+                if (place.category.isNotEmpty) ...[
+                  Text(
+                    place.category,
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Text(
+                  '${place.distanceM.toStringAsFixed(0)}m',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+            onTap: () {
+              // 다음 단계에서 처리
+            },
+          );
+        },
+      ),
     );
   }
 }
