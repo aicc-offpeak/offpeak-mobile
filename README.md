@@ -71,3 +71,8 @@ flutter pub get
 flutter run
 
 ────────────────────────────
+
+## 개발환경에서 로컬 호스팅 중인 벡엔드와 연결 방법
+
+adb reverse tcp:(벡엔드 포트) tcp:(벡엔드 포트)
+예: adb reverse tcp:8000 tcp:8000

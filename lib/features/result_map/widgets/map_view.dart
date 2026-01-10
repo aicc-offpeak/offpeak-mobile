@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:kakao_map_sdk/kakao_map_sdk.dart';
 
+import '../../../core/location/location_service.dart';
+
 /// Android 전용 KakaoMap MVP 베이스라인.
 /// POI 기반으로 지도 표시. labelLayer.addPoi 사용.
 class MapView extends StatefulWidget {
@@ -13,18 +15,50 @@ class MapView extends StatefulWidget {
 class _MapViewState extends State<MapView> {
   KakaoMapController? _controller;
   bool _isMapReady = false;
+  LatLng? _currentPosition;
+  final _locationService = LocationService();
 
-  // 하드코딩된 마커 좌표 (단일 상수로 정의)
-  static const _markerPosition = LatLng(37.4810, 126.8826);
   static const _zoomLevel = 16;
   static const _iconWidth = 64;
   static const _iconHeight = 64;
 
   @override
+  void initState() {
+    super.initState();
+    _loadCurrentPosition();
+  }
+
+  Future<void> _loadCurrentPosition() async {
+    try {
+      final location = await _locationService.getCurrentPosition();
+      if (mounted) {
+        setState(() {
+          _currentPosition = LatLng(location.latitude, location.longitude);
+        });
+      }
+    } catch (e) {
+      debugPrint('[MapView] 위치 가져오기 실패: $e');
+      // 기본값으로 서울 좌표 사용 (에러 발생 시)
+      if (mounted) {
+        setState(() {
+          _currentPosition = const LatLng(37.5665, 126.9780);
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // 위치를 아직 가져오지 못한 경우 로딩 표시
+    if (_currentPosition == null) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
     return KakaoMap(
-      option: const KakaoMapOption(
-        position: _markerPosition,
+      option: KakaoMapOption(
+        position: _currentPosition!,
         zoomLevel: _zoomLevel,
       ),
       onMapReady: (controller) {
@@ -43,18 +77,18 @@ class _MapViewState extends State<MapView> {
   }
 
   void _addPoi() {
-    if (!_isMapReady || _controller == null) {
+    if (!_isMapReady || _controller == null || _currentPosition == null) {
       debugPrint('[MapView] POI 추가 실패: 지도가 아직 준비되지 않음');
       return;
     }
 
-    debugPrint('[MapView] POI 추가 시도: $_markerPosition');
+    debugPrint('[MapView] POI 추가 시도: $_currentPosition');
 
     // labelLayer.addPoi로 아이콘 기반 POI 추가
     // KImage.fromAsset으로 아이콘 사용 (path, width, height 순서)
     try {
       _controller!.labelLayer.addPoi(
-        _markerPosition,
+        _currentPosition!,
         style: PoiStyle(
           icon: KImage.fromAsset(
             'assets/icons/boom_pin.png',
@@ -70,12 +104,12 @@ class _MapViewState extends State<MapView> {
   }
 
   void _moveCameraToMarker() {
-    if (!_isMapReady || _controller == null) {
+    if (!_isMapReady || _controller == null || _currentPosition == null) {
       debugPrint('[MapView] 카메라 이동 실패: 지도가 아직 준비되지 않음');
       return;
     }
 
-    debugPrint('[MapView] 카메라 이동 시도: $_markerPosition');
+    debugPrint('[MapView] 카메라 이동 시도: $_currentPosition');
 
     // 카메라를 마커 좌표로 이동시켜 화면 정중앙에 마커가 오도록 함
     // KakaoMapOption의 초기 position이 이미 마커 좌표로 설정되어 있으므로,
