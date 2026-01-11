@@ -37,6 +37,32 @@ class SearchController extends ChangeNotifier {
     }
   }
 
+  /// 디버깅용: 즉시 검색 수행 (debounce 없이)
+  Future<List<Place>> searchImmediate(String keyword) async {
+    if (_cachedLocation == null) {
+      await initializeLocation();
+    }
+
+    final request = SearchRequest(
+      query: keyword.trim(),
+      lat: _cachedLocation!.latitude,
+      lng: _cachedLocation!.longitude,
+      size: 5,
+      radiusM: 3000,
+      scope: 'food_cafe',
+    );
+    final res = await _repository.searchPlaces(request);
+    switch (res) {
+      case ApiSuccess<List<Place>>(data: final data):
+        return data;
+      case ApiFailure<List<Place>>(message: final message):
+        logError('Search failed', message);
+        return [];
+      default:
+        return [];
+    }
+  }
+
   void search(String keyword) {
     if (keyword.trim().isEmpty) {
       results = [];

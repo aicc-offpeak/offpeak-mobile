@@ -171,23 +171,11 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
         children: [
           Row(
             children: [
-              // 브랜드 아이콘
-              if (imageUrl.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12.0),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      imageUrl,
-                      width: 48,
-                      height: 48,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return const SizedBox.shrink();
-                      },
-                    ),
-                  ),
-                ),
+              // 브랜드 아이콘 (원형)
+              Padding(
+                padding: const EdgeInsets.only(right: 12.0),
+                child: _buildBrandIcon(imageUrl, size: 48),
+              ),
               Expanded(
                 child: Text(
                   placeName,
@@ -304,20 +292,7 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
                 final alt = alternatives[index];
                 final imageUrl = alt.place.imageUrl;
                 return ListTile(
-                  leading: imageUrl.isNotEmpty
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            imageUrl,
-                            width: 48,
-                            height: 48,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const SizedBox.shrink();
-                            },
-                          ),
-                        )
-                      : null,
+                  leading: _buildBrandIcon(imageUrl, size: 48),
                   title: Text(alt.place.name),
                   subtitle: Row(
                     children: [
@@ -369,6 +344,56 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 브랜드 아이콘 빌더 (원형)
+  /// imageUrl이 있으면 NetworkImage 사용, 없으면 placeholder 표시
+  Widget _buildBrandIcon(String? imageUrl, {double size = 48}) {
+    return ClipOval(
+      child: Container(
+        width: size,
+        height: size,
+        color: Colors.grey[200], // placeholder 배경색
+        child: imageUrl != null && imageUrl.isNotEmpty
+            ? Image.network(
+                imageUrl,
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) {
+                  // 로딩 실패 시 placeholder 표시
+                  return _buildPlaceholderIcon(size);
+                },
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Center(
+                    child: CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
+                      strokeWidth: 2,
+                    ),
+                  );
+                },
+              )
+            : _buildPlaceholderIcon(size),
+      ),
+    );
+  }
+
+  /// Placeholder 아이콘 (기본 아이콘)
+  Widget _buildPlaceholderIcon(double size) {
+    return Container(
+      width: size,
+      height: size,
+      color: Colors.grey[200],
+      child: Icon(
+        Icons.store,
+        size: size * 0.5,
+        color: Colors.grey[400],
       ),
     );
   }
