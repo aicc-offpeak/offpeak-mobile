@@ -8,11 +8,13 @@ class SearchResponse {
 
   factory SearchResponse.fromJson(Map<String, dynamic> json) {
     final items = (json['items'] as List<dynamic>? ?? [])
-        .map((e) => Place.fromJson(e as Map<String, dynamic>))
+        .map((e) => Place.fromJson(
+              e as Map<String, dynamic>? ?? <String, dynamic>{},
+            ))
         .toList();
     return SearchResponse(
       places: items,
-      totalCount: json['total_count'] ?? items.length,
+      totalCount: (json['total_count'] as int?) ?? items.length,
     );
   }
 }

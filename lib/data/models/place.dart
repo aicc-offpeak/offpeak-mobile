@@ -6,6 +6,8 @@ class Place {
   final double longitude;
   final String category;
   final double distanceM;
+  final String categoryGroupCode;
+  final String imageUrl;
 
   const Place({
     required this.id,
@@ -15,17 +17,31 @@ class Place {
     required this.longitude,
     this.category = '',
     this.distanceM = 0.0,
+    this.categoryGroupCode = '',
+    this.imageUrl = '',
   });
 
   factory Place.fromJson(Map<String, dynamic> json) {
+    // null-safe 처리를 위해 각 필드를 안전하게 변환
+    String safeString(dynamic value) {
+      if (value == null) return '';
+      return value.toString();
+    }
+
     return Place(
-      id: json['id']?.toString() ?? '',
-      name: json['name'] ?? '',
-      address: json['address'] ?? json['address_name'] ?? '',
-      latitude: (json['lat'] ?? 0).toDouble(),
-      longitude: (json['lng'] ?? 0).toDouble(),
-      category: json['category_name'] ?? json['category_group_name'] ?? '',
-      distanceM: (json['distance_m'] ?? json['distance'] ?? 0).toDouble(),
+      id: safeString(json['id']),
+      name: safeString(json['name']),
+      address: safeString(json['address']) != '' 
+          ? safeString(json['address'])
+          : safeString(json['address_name']),
+      latitude: ((json['lat'] ?? json['latitude'] ?? 0) as num).toDouble(),
+      longitude: ((json['lng'] ?? json['longitude'] ?? 0) as num).toDouble(),
+      category: safeString(json['category_name']) != ''
+          ? safeString(json['category_name'])
+          : safeString(json['category_group_name']),
+      distanceM: ((json['distance_m'] ?? json['distance'] ?? 0) as num).toDouble(),
+      categoryGroupCode: safeString(json['category_group_code']),
+      imageUrl: safeString(json['image_url']),
     );
   }
 
@@ -38,6 +54,8 @@ class Place {
       'lng': longitude,
       'category_name': category,
       'distance_m': distanceM,
+      'category_group_code': categoryGroupCode,
+      'image_url': imageUrl,
     };
   }
 }
