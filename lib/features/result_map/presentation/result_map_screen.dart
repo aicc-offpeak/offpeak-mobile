@@ -32,7 +32,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   bool _isCongestionInverted = false; // 디버깅용: 혼잡도 반전 여부
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
-  Place? _currentSelectedPlace; // 현재 선택된 매장 (추천 매장 선택 시 변경됨)
 
   @override
   void initState() {
@@ -44,7 +43,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeIn),
     );
-    _currentSelectedPlace = widget.selectedPlace;
     if (widget.selectedPlace != null) {
       _loadInsight();
     }
@@ -56,28 +54,24 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     super.dispose();
   }
 
-  Future<void> _loadInsight({Place? place}) async {
-    final targetPlace = place ?? _currentSelectedPlace ?? widget.selectedPlace;
-    if (targetPlace == null) return;
-
-    debugPrint('[ResultMapScreen] _loadInsight 호출: targetPlace=${targetPlace.name}, place 파라미터=${place?.name ?? "null"}');
+  Future<void> _loadInsight() async {
+    if (widget.selectedPlace == null) return;
 
     setState(() {
       _isLoading = true;
       _error = null;
-      _currentSelectedPlace = targetPlace;
     });
 
     try {
       final location = await _locationService.getCurrentPosition();
       final request = PlacesInsightRequest(
-        selected: targetPlace,
+        selected: widget.selectedPlace!,
         userLat: location.latitude,
         userLng: location.longitude,
         maxAlternatives: 3,
       );
 
-      debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 시작... 매장: ${targetPlace.name}');
+      debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 시작...');
       final result = await _insightRepository.getInsight(request);
       debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 완료: ${result.runtimeType}');
       
@@ -95,7 +89,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               _isLoading = false;
             });
             debugPrint('[ResultMapScreen] setState 완료: _insightData=${_insightData != null}');
-            debugPrint('[ResultMapScreen] _currentSelectedPlace 업데이트: ${_currentSelectedPlace?.name}');
             // 혼잡 상태가 변경되면 애니메이션 재시작
             if (isCongested) {
               _animationController.forward();
@@ -138,16 +131,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }
 
   PlaceWithZone? get _selectedPlaceWithZone {
-    if (_insightData == null) return null;
+    if (_insightData == null || widget.selectedPlace == null) return null;
     return _insightData!.selected;
-  }
-
-  Place? get _displaySelectedPlace {
-    // _insightData가 있으면 그 안의 선택된 매장을 우선 사용
-    if (_insightData != null) {
-      return _insightData!.selected.place;
-    }
-    return _currentSelectedPlace ?? widget.selectedPlace;
   }
 
   List<PlaceWithZone> get _recommendedPlaces {
@@ -168,14 +153,22 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }
 
   void _handleRecommendedPlaceTap(PlaceWithZone placeWithZone) {
-    // 추천 매장 선택 시 해당 매장으로 변경하고 인사이트 데이터 다시 로드
-    debugPrint('[ResultMapScreen] 추천 매장 탭: ${placeWithZone.place.name}');
-    _loadInsight(place: placeWithZone.place);
+    // TODO: 추천 매장 선택 시 해당 위치로 이동 및 선택 상태 업데이트
+    // 현재는 화면을 다시 로드하지 않고 상태만 업데이트
+    setState(() {
+      // 선택된 매장을 추천 매장으로 변경
+      _insightData = PlacesInsightResponse(
+        selected: placeWithZone,
+        alternatives: _insightData!.alternatives
+            .where((alt) => alt.place.id != placeWithZone.place.id)
+            .toList(),
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('[ResultMapScreen] 🔄 build 호출: widget.selectedPlace=${widget.selectedPlace?.name}, _currentSelectedPlace=${_currentSelectedPlace?.name}, _displaySelectedPlace=${_displaySelectedPlace?.name}, _insightData=${_insightData != null}, _isLoading=$_isLoading, _error=$_error');
+    debugPrint('[ResultMapScreen] 🔄 build 호출: selectedPlace=${widget.selectedPlace?.name}, _insightData=${_insightData != null}, _isLoading=$_isLoading, _error=$_error');
     
     return WillPopScope(
       onWillPop: () async {
@@ -197,12 +190,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           children: [
             // 지도는 전체 화면에 표시
             MapView(
-              selectedPlace: _selectedPlaceWithZone?.place ?? _displaySelectedPlace,
+              selectedPlace: _selectedPlaceWithZone?.place ?? widget.selectedPlace,
               zoneInfo: _displayZone,
               recommendedPlaces: _isCongested ? _recommendedPlaces : [],
             ),
             // 상단 섹션: selectedPlace가 있으면 항상 표시
-            if (_displaySelectedPlace != null)
+            if (widget.selectedPlace != null)
               Positioned(
                 top: 0,
                 left: 0,
@@ -220,7 +213,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 ),
               ),
             // selectedPlace가 없을 때 안내 메시지
-            if (_displaySelectedPlace == null)
+            if (widget.selectedPlace == null)
               const Center(
                 child: Text(
                   '매장을 선택해주세요',
@@ -300,11 +293,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
   /// 상단 앵커 섹션: "(selectedPlace.name) 기준" + "다시 선택" 버튼
   Widget _buildTopAnchorSection() {
-    final displayPlace = _displaySelectedPlace;
-    if (displayPlace == null) return const SizedBox.shrink();
-    
-    final placeName = displayPlace.name;
-    final imageUrl = displayPlace.imageUrl;
+    final placeName = widget.selectedPlace!.name;
+    final imageUrl = widget.selectedPlace!.imageUrl;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
