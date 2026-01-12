@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -6,7 +6,6 @@ import 'package:kakao_map_sdk/kakao_map_sdk.dart';
 
 import '../../../core/location/location_service.dart';
 import '../../../data/models/place.dart';
-import '../../../data/models/place_with_zone.dart';
 import '../../../data/models/zone_info.dart';
 
 /// Android 전용 KakaoMap MVP 베이스라인.
@@ -14,13 +13,11 @@ import '../../../data/models/zone_info.dart';
 class MapView extends StatefulWidget {
   final Place? selectedPlace;
   final ZoneInfo? zoneInfo;
-  final List<PlaceWithZone> recommendedPlaces;
 
   const MapView({
     super.key,
     this.selectedPlace,
     this.zoneInfo,
-    this.recommendedPlaces = const [],
   });
 
   @override
@@ -33,7 +30,6 @@ class _MapViewState extends State<MapView> {
   LatLng? _currentPosition;
   final _locationService = LocationService();
   dynamic _currentPoi; // 현재 표시 중인 POI (Poi 타입이 불확실하므로 dynamic 사용)
-  final List<dynamic> _recommendedPois = []; // 추천 매장 POI 리스트
   dynamic _userLocationPoi; // 사용자 위치 POI
   StreamSubscription<LocationData>? _locationSubscription;
   LatLng? _lastUserLocationPoiPosition; // 마지막으로 POI를 생성한 위치 (throttle용)
@@ -85,13 +81,6 @@ class _MapViewState extends State<MapView> {
       // 비동기 함수이므로 에러 처리 추가
       _updateSelectedPlacePoi().catchError((e) {
         debugPrint('[MapView] POI 업데이트 에러 (didUpdateWidget): $e');
-      });
-    }
-    // 추천 매장이 변경되면 POI 업데이트
-    if (widget.recommendedPlaces.length != oldWidget.recommendedPlaces.length ||
-        widget.recommendedPlaces.any((p) => !oldWidget.recommendedPlaces.any((op) => op.place.id == p.place.id))) {
-      _updateRecommendedPlacesPoi().catchError((e) {
-        debugPrint('[MapView] 추천 매장 POI 업데이트 에러: $e');
       });
     }
     // 사용자 위치는 스트림으로 처리하므로 didUpdateWidget에서는 처리하지 않음
@@ -148,10 +137,6 @@ class _MapViewState extends State<MapView> {
         // 비동기 함수이므로 에러 처리 추가
         _updateSelectedPlacePoi().catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
-        });
-        // 추천 매장 POI 추가
-        _updateRecommendedPlacesPoi().catchError((e) {
-          debugPrint('[MapView] 추천 매장 POI 업데이트 에러: $e');
         });
         // 지도 준비 완료 후 현재 위치를 가져와서 POI 추가
         _loadInitialUserLocation().catchError((e) {
@@ -267,65 +252,6 @@ class _MapViewState extends State<MapView> {
       debugPrint('[MapView] ❌ POI 추가 최종 실패: $e');
       debugPrint('[MapView] 에러 타입: ${e.runtimeType}');
       debugPrint('[MapView] 에러 스택: ${e.toString()}');
-    }
-  }
-
-  /// 추천 매장 POI 업데이트
-  Future<void> _updateRecommendedPlacesPoi() async {
-    if (!_isMapReady || _controller == null) {
-      debugPrint('[MapView] 추천 매장 POI 업데이트 스킵: 지도가 준비되지 않음');
-      return;
-    }
-
-    // 기존 추천 매장 POI 제거
-    for (final poi in _recommendedPois) {
-      try {
-        await _controller!.labelLayer.removePoi(poi);
-      } catch (e) {
-        debugPrint('[MapView] 추천 매장 POI 제거 실패: $e');
-      }
-    }
-    _recommendedPois.clear();
-
-    // 추천 매장이 없으면 종료
-    if (widget.recommendedPlaces.isEmpty) {
-      return;
-    }
-
-    // 새 추천 매장 POI 추가 (선택 매장보다 낮은 우선순위로 표시)
-    for (final placeWithZone in widget.recommendedPlaces) {
-      try {
-        final place = placeWithZone.place;
-        final zone = placeWithZone.zone;
-        final position = LatLng(place.latitude, place.longitude);
-        final placeName = place.name;
-        final statusText = zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유';
-        final poiText = '$placeName\n$statusText';
-
-        // 추천 매장은 선택 매장보다 작은 마커 사용
-        final markerIcon = KImage.fromAsset(
-          'assets/icons/map_marker.png',
-          (_markerWidth * 0.8).toInt(), // 선택 매장보다 20% 작게
-          (_markerHeight * 0.8).toInt(),
-        );
-
-        final poiStyle = PoiStyle(
-          icon: markerIcon,
-          anchor: KPoint(0.5, 1.0),
-          applyDpScale: true,
-        );
-
-        final addedPoi = await _controller!.labelLayer.addPoi(
-          position,
-          text: poiText,
-          style: poiStyle,
-        );
-
-        _recommendedPois.add(addedPoi);
-        debugPrint('[MapView] ✅ 추천 매장 POI 추가 성공: $placeName');
-      } catch (e) {
-        debugPrint('[MapView] ❌ 추천 매장 POI 추가 실패: $e');
-      }
     }
   }
 
@@ -506,25 +432,6 @@ class _MapViewState extends State<MapView> {
         debugPrint('[MapView] POI 정리 실패: $e');
       }
     }
-    // 추천 매장 POI 정리
-    if (_controller != null && _recommendedPois.isNotEmpty) {
-      for (final poi in _recommendedPois) {
-        try {
-          if (poi is Future) {
-            (poi as Future).then((p) {
-              _controller?.labelLayer.removePoi(p);
-            }).catchError((e) {
-              debugPrint('[MapView] 추천 매장 POI 정리 실패: $e');
-            });
-          } else {
-            _controller!.labelLayer.removePoi(poi);
-          }
-        } catch (e) {
-          debugPrint('[MapView] 추천 매장 POI 정리 실패: $e');
-        }
-      }
-      _recommendedPois.clear();
-    }
     // 사용자 위치 POI 정리
     if (_controller != null && _userLocationPoi != null) {
       try {
@@ -550,4 +457,8 @@ class _MapViewState extends State<MapView> {
     super.dispose();
   }
 }
+
+
+
+
 
