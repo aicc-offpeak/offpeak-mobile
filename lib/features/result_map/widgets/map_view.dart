@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:kakao_map_sdk/kakao_map_sdk.dart';
 
@@ -27,6 +30,10 @@ class _MapViewState extends State<MapView> {
   LatLng? _currentPosition;
   final _locationService = LocationService();
   dynamic _currentPoi; // 현재 표시 중인 POI (Poi 타입이 불확실하므로 dynamic 사용)
+  dynamic _userLocationPoi; // 사용자 위치 POI
+  StreamSubscription<LocationData>? _locationSubscription;
+  LatLng? _lastUserLocationPoiPosition; // 마지막으로 POI를 생성한 위치 (throttle용)
+  DateTime? _lastUserLocationUpdateTime; // 마지막 업데이트 시간 (throttle용)
 
   static const _zoomLevel = 16;
   
@@ -35,6 +42,9 @@ class _MapViewState extends State<MapView> {
   // 예: 110x70, 165x105, 220x140 등
   static const double _markerWidth = 110.0;  // 11의 배수
   static const double _markerHeight = 70.0;  // 7의 배수 (11:7 비율 유지)
+  
+  // 사용자 위치 마커 크기 (원래 크기의 1/3)
+  static const int _userLocationMarkerSize = 13;
 
   @override
   void initState() {
@@ -48,6 +58,8 @@ class _MapViewState extends State<MapView> {
     } else {
       _loadCurrentPosition();
     }
+    // 사용자 위치 스트림 구독 시작
+    _startLocationStream();
   }
 
   @override
@@ -71,6 +83,7 @@ class _MapViewState extends State<MapView> {
         debugPrint('[MapView] POI 업데이트 에러 (didUpdateWidget): $e');
       });
     }
+    // 사용자 위치는 스트림으로 처리하므로 didUpdateWidget에서는 처리하지 않음
   }
 
   Future<void> _loadCurrentPosition() async {
@@ -124,6 +137,10 @@ class _MapViewState extends State<MapView> {
         // 비동기 함수이므로 에러 처리 추가
         _updateSelectedPlacePoi().catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
+        });
+        // 지도 준비 완료 후 현재 위치를 가져와서 POI 추가
+        _loadInitialUserLocation().catchError((e) {
+          debugPrint('[MapView] 초기 사용자 위치 로드 에러: $e');
         });
         debugPrint('[MapView] _updateSelectedPlacePoi 호출 후');
       },
@@ -238,6 +255,148 @@ class _MapViewState extends State<MapView> {
     }
   }
 
+  /// 위치 스트림 구독 시작
+  void _startLocationStream() {
+    _locationSubscription?.cancel();
+    _locationSubscription = _locationService.getPositionStream(
+      distanceFilter: 5,
+    ).listen(
+      (location) {
+        if (!mounted) return;
+        debugPrint('[MapView] 위치 스트림 업데이트: ${location.latitude}, ${location.longitude}');
+        _updateUserLocationPoiFromStream(
+          LatLng(location.latitude, location.longitude),
+        );
+      },
+      onError: (error) {
+        debugPrint('[MapView] ❌ 위치 스트림 에러: $error');
+        debugPrint('[MapView] 위치 권한을 확인하세요.');
+      },
+      cancelOnError: false, // 에러 발생해도 스트림 계속 유지
+    );
+  }
+
+  /// 지도 준비 완료 후 초기 사용자 위치 로드 및 POI 추가
+  Future<void> _loadInitialUserLocation() async {
+    if (!_isMapReady || _controller == null) {
+      debugPrint('[MapView] 초기 사용자 위치 로드 스킵: 지도가 준비되지 않음');
+      return;
+    }
+
+    try {
+      debugPrint('[MapView] 초기 사용자 위치 가져오는 중...');
+      final location = await _locationService.getCurrentPosition();
+      if (!mounted) return;
+      
+      debugPrint('[MapView] 초기 사용자 위치: ${location.latitude}, ${location.longitude}');
+      final locationLatLng = LatLng(location.latitude, location.longitude);
+      // 초기 위치는 throttle 없이 바로 추가
+      _lastUserLocationPoiPosition = locationLatLng;
+      _lastUserLocationUpdateTime = DateTime.now();
+      await _updateUserLocationPoi(locationLatLng);
+      debugPrint('[MapView] ✅ 초기 사용자 위치 POI 추가 완료');
+    } catch (e) {
+      debugPrint('[MapView] ❌ 초기 사용자 위치 로드 실패: $e');
+      debugPrint('[MapView] 위치 권한을 확인하거나 위치 서비스를 활성화하세요.');
+    }
+  }
+
+  /// 스트림에서 받은 위치로 POI 업데이트 (throttle 적용)
+  Future<void> _updateUserLocationPoiFromStream(LatLng newLocation) async {
+    // Throttle 체크: 최소 500ms 간격
+    final now = DateTime.now();
+    if (_lastUserLocationUpdateTime != null) {
+      final timeDiff = now.difference(_lastUserLocationUpdateTime!);
+      if (timeDiff.inMilliseconds < 500) {
+        return; // 너무 빨리 업데이트 요청이 들어오면 스킵
+      }
+    }
+
+    // Throttle 체크: 최소 5m 거리 이동
+    if (_lastUserLocationPoiPosition != null) {
+      final distance = _calculateDistance(
+        _lastUserLocationPoiPosition!.latitude,
+        _lastUserLocationPoiPosition!.longitude,
+        newLocation.latitude,
+        newLocation.longitude,
+      );
+      if (distance < 5.0) {
+        return; // 5m 미만 이동이면 스킵
+      }
+    }
+
+    // 업데이트 시간 및 위치 저장
+    _lastUserLocationUpdateTime = now;
+    _lastUserLocationPoiPosition = newLocation;
+
+    // POI 업데이트
+    await _updateUserLocationPoi(newLocation);
+  }
+
+  /// 두 좌표 간 거리 계산 (미터 단위)
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    // Haversine 공식 사용
+    const double earthRadius = 6371000; // 지구 반지름 (미터)
+    final double dLat = _toRadians(lat2 - lat1);
+    final double dLon = _toRadians(lon2 - lon1);
+    final double a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_toRadians(lat1)) *
+            math.cos(_toRadians(lat2)) *
+            math.sin(dLon / 2) *
+            math.sin(dLon / 2);
+    final double c = 2 * math.asin(math.sqrt(a));
+    return earthRadius * c;
+  }
+
+  double _toRadians(double degrees) => degrees * (math.pi / 180);
+
+  /// 사용자 위치 POI 업데이트
+  Future<void> _updateUserLocationPoi(LatLng location) async {
+    if (!_isMapReady || _controller == null) {
+      debugPrint('[MapView] 사용자 위치 POI 업데이트 스킵: 지도가 준비되지 않음');
+      return;
+    }
+
+    // 기존 사용자 위치 POI 제거 (POI 1개만 유지)
+    if (_userLocationPoi != null) {
+      try {
+        await _controller!.labelLayer.removePoi(_userLocationPoi!);
+        _userLocationPoi = null;
+        debugPrint('[MapView] 기존 사용자 위치 POI 제거 완료');
+      } catch (e) {
+        debugPrint('[MapView] 사용자 위치 POI 제거 실패: $e');
+      }
+    }
+
+    // 새 사용자 위치 POI 추가
+    try {
+      // user_loc.png 사용 (40x40, anchor 0.5, 0.5, text 없음)
+      final markerIcon = KImage.fromAsset(
+        'assets/icons/user_loc.png',
+        _userLocationMarkerSize,
+        _userLocationMarkerSize,
+      );
+      
+      final poiStyle = PoiStyle(
+        icon: markerIcon,
+        anchor: KPoint(0.5, 0.5), // 중앙 정렬
+        applyDpScale: true,
+      );
+      
+      final addedPoi = await _controller!.labelLayer.addPoi(
+        location,
+        style: poiStyle,
+        // text는 표시하지 않음 (가독성/겹침 방지)
+      );
+      
+      _userLocationPoi = addedPoi;
+      debugPrint('[MapView] ✅ 사용자 위치 POI 추가 성공');
+      debugPrint('[MapView] 사용자 위치: ${location.latitude}, ${location.longitude}');
+    } catch (e) {
+      debugPrint('[MapView] ❌ 사용자 위치 POI 추가 실패: $e');
+    }
+  }
+
   void _moveCameraToMarker() {
     if (!_isMapReady || _controller == null || _currentPosition == null) {
       debugPrint('[MapView] 카메라 이동 실패: 지도가 아직 준비되지 않음');
@@ -252,6 +411,10 @@ class _MapViewState extends State<MapView> {
 
   @override
   void dispose() {
+    // 위치 스트림 구독 취소
+    _locationSubscription?.cancel();
+    _locationSubscription = null;
+    
     // POI 정리 (비동기이지만 dispose에서는 await 불가)
     if (_controller != null && _currentPoi != null) {
       try {
@@ -269,9 +432,28 @@ class _MapViewState extends State<MapView> {
         debugPrint('[MapView] POI 정리 실패: $e');
       }
     }
+    // 사용자 위치 POI 정리
+    if (_controller != null && _userLocationPoi != null) {
+      try {
+        if (_userLocationPoi is Future) {
+          (_userLocationPoi as Future).then((poi) {
+            _controller?.labelLayer.removePoi(poi);
+          }).catchError((e) {
+            debugPrint('[MapView] 사용자 위치 POI 정리 실패: $e');
+          });
+        } else {
+          _controller!.labelLayer.removePoi(_userLocationPoi!);
+        }
+      } catch (e) {
+        debugPrint('[MapView] 사용자 위치 POI 정리 실패: $e');
+      }
+    }
     _controller = null;
     _isMapReady = false;
     _currentPoi = null;
+    _userLocationPoi = null;
+    _lastUserLocationPoiPosition = null;
+    _lastUserLocationUpdateTime = null;
     super.dispose();
   }
 }

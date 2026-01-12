@@ -59,6 +59,45 @@ class LocationService {
     );
   }
 
+  /// 위치 업데이트 스트림 반환
+  /// distanceFilter: 최소 이동 거리 (미터)
+  /// 실제 throttle(시간 간격)은 호출 측에서 처리
+  Stream<LocationData> getPositionStream({
+    int distanceFilter = 5,
+  }) async* {
+    // 위치 서비스 활성화 확인
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      throw Exception('Location services are disabled.');
+    }
+
+    // 권한 확인 및 요청
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        throw Exception('Location permissions are denied');
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      throw Exception('Location permissions are permanently denied');
+    }
+
+    // 위치 스트림 구독
+    await for (final position in Geolocator.getPositionStream(
+      locationSettings: LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: distanceFilter,
+      ),
+    )) {
+      yield LocationData(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+    }
+  }
+
   LocationPermissionStatus _mapPermissionStatus(LocationPermission permission) {
     switch (permission) {
       case LocationPermission.always:

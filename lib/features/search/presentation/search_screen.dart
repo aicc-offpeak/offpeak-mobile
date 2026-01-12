@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/constants/routes.dart';
 import '../../../data/models/place.dart';
+import '../../../data/sources/local/mock_data.dart';
 import '../state/search_controller.dart' as search;
 import '../widgets/recent_keywords.dart';
 import '../widgets/search_bar.dart';
@@ -74,6 +75,32 @@ class _SearchScreenState extends State<SearchScreen> {
               ),
             // 나머지 공간
             const Spacer(),
+            // 디버깅용: 지도 화면으로 이동 버튼
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.pushNamed(
+                    context,
+                    Routes.resultMap,
+                    arguments: MockData.selectedStore,
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                ),
+                child: const Text(
+                  '지도 화면으로 이동 (디버깅)',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey,
+                  ),
+                ),
+              ),
+            ),
           ],
         );
       },

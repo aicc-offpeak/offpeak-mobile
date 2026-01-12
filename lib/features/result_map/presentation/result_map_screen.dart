@@ -121,20 +121,29 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
         body: Stack(
           children: [
             // 지도는 전체 화면에 표시
+            // 사용자 위치는 MapView 내부에서 스트림으로 처리
             MapView(
               selectedPlace: widget.selectedPlace,
               zoneInfo: _displayZone,
             ),
-            // 상단 섹션: 가게명, 혼잡도 상태, 추천 시간대 버튼
-            if (widget.selectedPlace != null)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  child: _buildTopSection(),
+          // 상단 섹션: 가게명, 혼잡도 상태, 추천 시간대 버튼
+          if (widget.selectedPlace != null)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildTopSection(),
+                    // 디버깅용: 혼잡도 반전 버튼 (카드 밖)
+                    if (_insightData != null) _buildCongestionToggleButton(),
+                  ],
                 ),
               ),
+            ),
             // 하단 섹션: 추천 매장 리스트 (혼잡 시에만 표시)
             if (_isCongested && _insightData != null)
               Positioned(
@@ -144,6 +153,38 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
                 child: _buildBottomSection(),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// 디버깅용: 혼잡도 반전 버튼 (카드 밖)
+  Widget _buildCongestionToggleButton() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(top: 8.0, left: 16.0),
+        width: MediaQuery.of(context).size.width / 3,
+        child: OutlinedButton(
+          onPressed: _toggleCongestion,
+          style: OutlinedButton.styleFrom(
+            backgroundColor: Colors.white.withOpacity(0.8),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 8,
+            ),
+            side: BorderSide(color: Colors.grey.withOpacity(0.3)),
+          ),
+          child: Text(
+            _isCongestionInverted
+                ? '혼잡도 원래대로 (디버깅)'
+                : '혼잡도 반전 (디버깅)',
+            style: const TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ),
     );
@@ -219,29 +260,6 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
                   style: TextStyle(
                     fontSize: 14,
                     color: Colors.blue,
-                  ),
-                ),
-              ),
-            ),
-          // 디버깅용: 혼잡도 반전 버튼
-          if (_insightData != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: OutlinedButton(
-                onPressed: _toggleCongestion,
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                ),
-                child: Text(
-                  _isCongestionInverted
-                      ? '혼잡도 원래대로 (디버깅)'
-                      : '혼잡도 반전 (디버깅)',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey,
                   ),
                 ),
               ),
