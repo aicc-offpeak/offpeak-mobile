@@ -69,4 +69,47 @@ class ZoneInfo {
       crowdingMessage: crowdingMessage,
     );
   }
+
+  /// 혼잡도 레벨만 변경한 새로운 ZoneInfo 생성
+  ZoneInfo copyWithCrowdingLevel(String newLevel) {
+    // 혼잡도 레벨에 따른 rank와 color 설정
+    int newRank;
+    String newColor;
+    
+    switch (newLevel) {
+      case '여유':
+      case '원활':
+        newRank = 4;
+        newColor = 'green';
+        break;
+      case '보통':
+        newRank = 3;
+        newColor = 'yellow';
+        break;
+      case '약간 붐빔':
+        newRank = 2;
+        newColor = 'orange';
+        break;
+      case '붐빔':
+        newRank = 1;
+        newColor = 'red';
+        break;
+      default:
+        newRank = crowdingRank;
+        newColor = crowdingColor;
+    }
+
+    return ZoneInfo(
+      code: code,
+      name: name,
+      lat: lat,
+      lng: lng,
+      distanceM: distanceM,
+      crowdingLevel: newLevel,
+      crowdingRank: newRank,
+      crowdingColor: newColor,
+      crowdingUpdatedAt: crowdingUpdatedAt,
+      crowdingMessage: crowdingMessage,
+    );
+  }
 }

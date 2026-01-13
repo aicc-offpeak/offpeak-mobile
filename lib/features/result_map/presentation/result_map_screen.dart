@@ -31,6 +31,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   PlacesInsightResponse? _insightData;
   bool _isLoading = false;
   bool _isCongestionInverted = false; // 디버깅용: 혼잡도 반전 여부
+  bool _isDebugMode = false; // 디버깅 모드 여부
+  String _selectedCrowdingLevel = '붐빔'; // 선택된 혼잡도 레벨 (디버깅용)
   Place? _currentSelectedPlace; // 현재 선택된 장소 (recommended place 선택 시 업데이트)
   late AnimationController _animationController; // 애니메이션 컨트롤러
 
@@ -85,6 +87,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             setState(() {
               _insightData = result.data;
               _isLoading = false;
+              _isDebugMode = false; // 실제 API 모드
+              _selectedCrowdingLevel = result.data.selected.zone.crowdingLevel; // 실제 혼잡도로 초기화
             });
             debugPrint('[ResultMapScreen] setState 완료: _insightData=${_insightData != null}');
             // 혼잡 상태가 변경되면 애니메이션 재시작
@@ -95,21 +99,167 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             }
           case ApiFailure<PlacesInsightResponse>():
             debugPrint('[ResultMapScreen] 데이터 로드 실패: ${result.message}');
-            setState(() {
-              _isLoading = false;
-              // TODO: 에러 메시지를 사용자에게 표시할 수 있도록 처리
-            });
+            debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
+            // API 실패 시 디버깅 모드로 전환
+            _loadDebugModeData();
         }
       }
     } catch (e, stackTrace) {
       debugPrint('[ResultMapScreen] 예외 발생: $e');
       debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
       if (mounted) {
-        setState(() {
-          _isLoading = false;
-          // TODO: 에러 메시지를 사용자에게 표시할 수 있도록 처리
-        });
+        debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
+        // 예외 발생 시 디버깅 모드로 전환
+        _loadDebugModeData();
       }
+    }
+  }
+
+  /// 디버깅 모드 데이터 로드
+  /// API 실패 시 사용되는 mock 데이터
+  void _loadDebugModeData() {
+    if (_currentSelectedPlace == null) return;
+
+    debugPrint('[ResultMapScreen] 디버깅 모드 데이터 생성 중...');
+    
+    // 선택 매장: 검색 결과 사용, 혼잡도는 "붐빔" (매우 혼잡)
+    final selectedPlace = _currentSelectedPlace!;
+    final selectedZone = ZoneInfo(
+      code: 'debug_selected',
+      name: selectedPlace.name,
+      lat: selectedPlace.latitude,
+      lng: selectedPlace.longitude,
+      distanceM: selectedPlace.distanceM,
+      crowdingLevel: _selectedCrowdingLevel, // 선택된 혼잡도 레벨 사용
+      crowdingRank: _selectedCrowdingLevel == '붐빔' ? 1 : 
+                    _selectedCrowdingLevel == '약간 붐빔' ? 2 :
+                    _selectedCrowdingLevel == '보통' ? 3 : 4,
+      crowdingColor: _selectedCrowdingLevel == '붐빔' ? 'red' :
+                     _selectedCrowdingLevel == '약간 붐빔' ? 'orange' :
+                     _selectedCrowdingLevel == '보통' ? 'yellow' : 'green',
+      crowdingUpdatedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      crowdingMessage: '디버깅 모드',
+    );
+
+    // 추천 매장 3곳 하드코딩 (가산 지역)
+    final recommendedPlaces = [
+      // 매장1: 스타벅스, 혼잡도-여유
+      PlaceWithZone(
+        place: Place(
+          id: 'debug_starbucks',
+          name: '스타벅스 가산에스케이점',
+          address: '서울특별시 금천구 가산동',
+          latitude: 37.4785,
+          longitude: 126.8876,
+          category: '카페',
+          distanceM: 500.0,
+          categoryGroupCode: 'CE7',
+        ),
+        zone: ZoneInfo(
+          code: 'debug_starbucks_zone',
+          name: '스타벅스 가산에스케이점',
+          lat: 37.4785,
+          lng: 126.8876,
+          distanceM: 500.0,
+          crowdingLevel: '여유',
+          crowdingRank: 4,
+          crowdingColor: 'green',
+          crowdingUpdatedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          crowdingMessage: '디버깅 모드',
+        ),
+      ),
+      // 매장2: 빽다방, 혼잡도-여유
+      PlaceWithZone(
+        place: Place(
+          id: 'debug_paikdabang',
+          name: '빽다방 가산디지털단지역점',
+          address: '서울특별시 금천구 가산동',
+          latitude: 37.4800,
+          longitude: 126.8900,
+          category: '카페',
+          distanceM: 600.0,
+          categoryGroupCode: 'CE7',
+        ),
+        zone: ZoneInfo(
+          code: 'debug_paikdabang_zone',
+          name: '빽다방 가산디지털단지역점',
+          lat: 37.4800,
+          lng: 126.8900,
+          distanceM: 600.0,
+          crowdingLevel: '여유',
+          crowdingRank: 4,
+          crowdingColor: 'green',
+          crowdingUpdatedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          crowdingMessage: '디버깅 모드',
+        ),
+      ),
+      // 매장3: 이디야, 혼잡도-보통
+      PlaceWithZone(
+        place: Place(
+          id: 'debug_ediya',
+          name: '이디야커피 가산점',
+          address: '서울특별시 금천구 가산동',
+          latitude: 37.4820,
+          longitude: 126.8920,
+          category: '카페',
+          distanceM: 700.0,
+          categoryGroupCode: 'CE7',
+        ),
+        zone: ZoneInfo(
+          code: 'debug_ediya_zone',
+          name: '이디야커피 가산점',
+          lat: 37.4820,
+          lng: 126.8920,
+          distanceM: 700.0,
+          crowdingLevel: '보통',
+          crowdingRank: 3,
+          crowdingColor: 'yellow',
+          crowdingUpdatedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          crowdingMessage: '디버깅 모드',
+        ),
+      ),
+    ];
+
+    final debugData = PlacesInsightResponse(
+      selected: PlaceWithZone(
+        place: selectedPlace,
+        zone: selectedZone,
+      ),
+      alternatives: recommendedPlaces,
+    );
+
+    setState(() {
+      _insightData = debugData;
+      _isLoading = false;
+      _isDebugMode = true;
+    });
+
+    debugPrint('[ResultMapScreen] ✅ 디버깅 모드 데이터 생성 완료');
+    debugPrint('[ResultMapScreen] - selected: ${selectedPlace.name}, 혼잡도: $_selectedCrowdingLevel');
+    debugPrint('[ResultMapScreen] - alternatives: ${recommendedPlaces.length}개');
+  }
+
+  /// 혼잡도 레벨 변경 (디버깅용)
+  void _onCrowdingLevelChanged(String newLevel) {
+    setState(() {
+      _selectedCrowdingLevel = newLevel;
+    });
+    
+    // 디버깅 모드인 경우 데이터 다시 생성
+    if (_isDebugMode && _insightData != null) {
+      _loadDebugModeData();
+    } else if (_insightData != null) {
+      // 실제 API 모드인 경우 선택된 장소의 혼잡도만 업데이트
+      final updatedZone = _insightData!.selected.zone.copyWithCrowdingLevel(newLevel);
+      setState(() {
+        _insightData = PlacesInsightResponse(
+          selected: PlaceWithZone(
+            place: _insightData!.selected.place,
+            zone: updatedZone,
+          ),
+          alternatives: _insightData!.alternatives,
+        );
+      });
     }
   }
 
@@ -120,11 +270,19 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }
 
   /// 혼잡도 반전을 적용한 ZoneInfo
+  /// 디버깅 모드에서는 선택된 혼잡도 레벨 사용
   ZoneInfo? get _displayZone {
     if (_insightData == null) return null;
-    return _isCongestionInverted
+    final baseZone = _isCongestionInverted
         ? _insightData!.selected.zone.copyWithInvertedCongestion()
         : _insightData!.selected.zone;
+    
+    // 디버깅 모드이고 선택된 혼잡도가 다르면 업데이트
+    if (_isDebugMode && baseZone.crowdingLevel != _selectedCrowdingLevel) {
+      return baseZone.copyWithCrowdingLevel(_selectedCrowdingLevel);
+    }
+    
+    return baseZone;
   }
 
   /// 혼잡도 반전을 적용한 혼잡 여부
@@ -150,18 +308,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     _loadInsight();
   }
 
-  /// 혼잡도 반전 토글 (디버깅용)
-  void _toggleCongestion() {
-    setState(() {
-      _isCongestionInverted = !_isCongestionInverted;
-    });
-    // 혼잡 상태가 변경되면 애니메이션 재시작
-    if (_isCongested) {
-      _animationController.forward();
-    } else {
-      _animationController.reset();
-    }
-  }
 
   void _handleRecommendedPlaceTap(PlaceWithZone placeWithZone) {
     // TODO: 추천 매장 선택 시 해당 위치로 이동 및 선택 상태 업데이트
@@ -218,8 +364,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _buildTopSection(selectedPlace),
-                      // 디버깅용: 혼잡도 반전 버튼
-                      if (_insightData != null) _buildCongestionToggleButton(),
+                      // 디버깅용: 혼잡도 선택 리스트 버튼
+                      if (_insightData != null) _buildCrowdingLevelSelector(),
                     ],
                   ),
                 ),
@@ -238,37 +384,62 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     );
   }
 
-  /// 디버깅용: 혼잡도 반전 버튼
-  Widget _buildCongestionToggleButton() {
+  /// 디버깅용: 혼잡도 선택 리스트 버튼
+  Widget _buildCrowdingLevelSelector() {
+    final crowdingLevels = ['여유', '보통', '약간 붐빔', '붐빔'];
+    final currentLevel = _displayZone?.crowdingLevel ?? _selectedCrowdingLevel;
+
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(top: 8.0, left: 16.0),
-        width: MediaQuery.of(context).size.width / 3,
-        child: OutlinedButton(
-          onPressed: _toggleCongestion,
-          style: OutlinedButton.styleFrom(
-            backgroundColor: Colors.white.withOpacity(0.8),
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 8,
-            ),
-            side: BorderSide(color: Colors.grey.withOpacity(0.3)),
-          ),
-          child: Text(
-            _isCongestionInverted
-                ? '혼잡도 원래대로 (디버깅)'
-                : '혼잡도 반전 (디버깅)',
-            style: const TextStyle(
-              fontSize: 12,
-              color: Colors.grey,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
+        margin: const EdgeInsets.only(top: 8.0, left: 16.0, bottom: 8.0),
+        child: Wrap(
+          spacing: 8.0,
+          runSpacing: 8.0,
+          children: crowdingLevels.map((level) {
+            final isSelected = level == currentLevel;
+            return ChoiceChip(
+              label: Text(
+                level,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  color: isSelected ? Colors.white : Colors.black87,
+                ),
+              ),
+              selected: isSelected,
+              onSelected: (selected) {
+                if (selected) {
+                  _onCrowdingLevelChanged(level);
+                }
+              },
+              selectedColor: _getCrowdingColor(level),
+              backgroundColor: Colors.grey[200],
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            );
+          }).toList(),
         ),
       ),
     );
   }
+
+  /// 혼잡도 레벨에 따른 색상 반환
+  Color _getCrowdingColor(String level) {
+    switch (level) {
+      case '여유':
+      case '원활':
+        return Colors.green;
+      case '보통':
+        return Colors.yellow.shade700;
+      case '약간 붐빔':
+        return Colors.orange;
+      case '붐빔':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
 
   /// 상단 섹션: "(장소명) 기준" 중앙, "다시 선택" 우측
   Widget _buildTopSection(Place selectedPlace) {
