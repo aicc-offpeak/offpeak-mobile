@@ -432,7 +432,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       case '보통':
         return Colors.yellow.shade700;
       case '약간 붐빔':
-        return Colors.orange;
+        return Colors.deepOrange; // 더 진한 주황색으로 변경
       case '붐빔':
         return Colors.red;
       default:
@@ -457,37 +457,69 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 브랜드 아이콘
-          _buildBrandIcon(placeName, size: 40),
-          const SizedBox(width: 12),
-          // "(장소명) 기준" 텍스트
-          Expanded(
-            child: Text(
-              '$placeName 기준',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
+          Row(
+            children: [
+              // 브랜드 아이콘
+              _buildBrandIcon(placeName, size: 40),
+              const SizedBox(width: 12),
+              // "(장소명) 기준" 텍스트
+              Expanded(
+                child: Text(
+                  '$placeName 기준',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
               ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
+              // 우측에 "다시 선택" 버튼
+              TextButton(
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, Routes.search);
+                },
+                child: const Text(
+                  '다시 선택',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.blue,
+                  ),
+                ),
+              ),
+            ],
           ),
-          // 우측에 "다시 선택" 버튼
-          TextButton(
-            onPressed: () {
-              Navigator.pushReplacementNamed(context, Routes.search);
-            },
-            child: const Text(
-              '다시 선택',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.blue,
+          // 조건부: "이 장소, 덜 붐비는 시간 보기 >" 버튼 (혼잡 시에만)
+          if (_insightData != null && _isCongested)
+            Padding(
+              padding: const EdgeInsets.only(top: 8.0),
+              child: TextButton(
+                onPressed: () {
+                  // TODO: 덜 붐비는 시간 보기 기능 구현
+                },
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 0,
+                    vertical: 4,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text(
+                  '이 장소, 덜 붐비는 시간 보기 >',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.blue,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
@@ -591,7 +623,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     );
   }
 
-  /// 하단 바텀시트: 상태에 따라 smooth 또는 busy 표시
+  /// 하단 바텀시트: 통일된 구조로 모든 혼잡도 상태 표시
   Widget _buildBottomSheet() {
     if (_currentPlaceWithZone == null) return const SizedBox.shrink();
 
@@ -600,7 +632,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
     return Container(
       constraints: BoxConstraints(
-        maxHeight: _isCongested ? 400 : 250,
+        maxHeight: _isCongested ? 500 : 250,
       ),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -616,145 +648,161 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           ),
         ],
       ),
-      child: _isCongested
-          ? _buildBusyBottomSheet(placeWithZone, zone)
-          : _buildSmoothBottomSheet(placeWithZone, zone),
+      child: _buildUnifiedBottomSheet(placeWithZone, zone),
     );
   }
 
-  /// Smooth 상태 바텀시트: "지금 가도 돼요"
-  Widget _buildSmoothBottomSheet(PlaceWithZone placeWithZone, ZoneInfo zone) {
+  /// 통일된 바텀시트: 모든 혼잡도 상태에서 동일한 구조 사용
+  Widget _buildUnifiedBottomSheet(PlaceWithZone placeWithZone, ZoneInfo zone) {
     final place = placeWithZone.place;
+    final recommendedPlaces = _recommendedPlaces;
+    final statusMessages = _getStatusMessages(zone.crowdingLevel);
 
     return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 브랜드 아이콘과 장소명
-            Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 선택된 장소 요약 섹션 (항상 표시) - 안내 문구 위로 이동
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: _buildSelectedPlaceSummary(place, zone),
+          ),
+          // 상태 메시지 섹션
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _buildBrandIcon(place.name, size: 56),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        place.name,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      // 혼잡도 해석 텍스트
-                      Text(
-                        _getCongestionInterpretation(zone),
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                    ],
+                Text(
+                  statusMessages[0],
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            // 거리 정보
-            if (place.distanceM > 0)
-              Row(
-                children: [
-                  Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
+                if (statusMessages.length > 1) ...[
+                  const SizedBox(height: 8),
                   Text(
-                    '${place.distanceM.toStringAsFixed(0)}m',
+                    statusMessages[1],
                     style: TextStyle(
                       fontSize: 14,
-                      color: Colors.grey[600],
+                      color: Colors.grey[700],
                     ),
                   ),
                 ],
-              ),
-            const SizedBox(height: 24),
-            // 결정 결론 텍스트
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.green.withOpacity(0.3),
-                  width: 1,
-                ),
-              ),
-              child: const Text(
-                '지금 가도 돼요',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green,
-                ),
-                textAlign: TextAlign.center,
+              ],
+            ),
+          ),
+          // 조건부 추천 장소 섹션 (약간 붐빔, 붐빔일 때만)
+          if (_isCongested && recommendedPlaces.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
+              child: Divider(),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Column(
+                children: recommendedPlaces.map((recommended) {
+                  return _buildRecommendedPlaceCard(recommended);
+                }).toList(),
               ),
             ),
           ],
-        ),
+          const SizedBox(height: 16),
+        ],
       ),
     );
   }
 
-  /// Busy 상태 바텀시트: 추천 장소 리스트
-  Widget _buildBusyBottomSheet(PlaceWithZone placeWithZone, ZoneInfo zone) {
-    final recommendedPlaces = _recommendedPlaces;
+  /// 혼잡도별 상태 메시지 반환
+  List<String> _getStatusMessages(String crowdingLevel) {
+    switch (crowdingLevel) {
+      case '여유':
+      case '원활':
+        return ['지금은 여유 있어요', '지금 방문해도 괜찮아요'];
+      case '보통':
+        return ['지금은 사람이 조금 있는 편이에요', '이용하기에 큰 무리는 없어요'];
+      case '약간 붐빔':
+        return ['지금은 약간 붐비는 편이에요', '조금 덜 붐비는 곳도 함께 볼 수 있어요'];
+      case '붐빔':
+        return ['지금은 붐비고 있어요', '대신 이 근처는 비교적 여유 있어요'];
+      default:
+        return ['혼잡도 정보를 확인하세요'];
+    }
+  }
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+  /// 선택된 장소 요약 (항상 표시)
+  Widget _buildSelectedPlaceSummary(Place place, ZoneInfo zone) {
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+        // 브랜드 아이콘
+        _buildBrandIcon(place.name, size: 56),
+        const SizedBox(width: 16),
+        // 장소 정보
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                '지금은 이곳이 붐벼요.',
-                style: TextStyle(
-                  fontSize: 18,
+              // 장소명
+              Text(
+                place.name,
+                style: const TextStyle(
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                   color: Colors.black87,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 8),
-              Text(
-                '대신 이 근처는 비교적 여유 있어요.',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey[700],
-                ),
+              // 혼잡도 배지와 거리
+              Row(
+                children: [
+                  // 혼잡도 배지
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _getCrowdingColor(zone.crowdingLevel).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _getCrowdingColor(zone.crowdingLevel),
+                        fontWeight: FontWeight.w600,
+                        height: 1.0, // 줄 간격을 1.0으로 설정하여 세로 중앙 정렬 개선
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // 거리 정보
+                  if (place.distanceM > 0)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${place.distanceM.toStringAsFixed(0)}m',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
               ),
             ],
           ),
         ),
-        Flexible(
-          child: ListView.builder(
-            shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: recommendedPlaces.length,
-            itemBuilder: (context, index) {
-              final recommended = recommendedPlaces[index];
-              return _buildRecommendedPlaceCard(recommended);
-            },
-          ),
-        ),
-        const SizedBox(height: 16),
       ],
     );
   }
@@ -764,55 +812,78 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final place = placeWithZone.place;
     final zone = placeWithZone.zone;
 
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: _buildBrandIcon(place.name, size: 48),
-      title: Text(
-        place.name,
-        style: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.bold,
-          color: Colors.black87,
+    return InkWell(
+      onTap: () => _onRecommendedPlaceSelected(placeWithZone),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 7),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 브랜드 아이콘
+            _buildBrandIcon(place.name, size: 48),
+            const SizedBox(width: 12),
+            // 장소 정보
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 장소명
+                  Text(
+                    place.name,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  // 혼잡도 배지와 거리
+                  Row(
+                    children: [
+                      // 혼잡도 상태
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: _getCrowdingColor(zone.crowdingLevel).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _getCrowdingColor(zone.crowdingLevel),
+                            fontWeight: FontWeight.w600,
+                            height: 1.0, // 줄 간격을 1.0으로 설정하여 세로 중앙 정렬 개선
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // 거리
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.location_on, size: 13, color: Colors.grey[600]),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${place.distanceM.toStringAsFixed(0)}m',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      subtitle: Row(
-        children: [
-          // 혼잡도 상태
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.green,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // 거리
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.location_on, size: 14, color: Colors.grey[600]),
-              const SizedBox(width: 4),
-              Text(
-                '${place.distanceM.toStringAsFixed(0)}m',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-      onTap: () => _onRecommendedPlaceSelected(placeWithZone),
-      splashColor: Colors.transparent,
     );
   }
 
