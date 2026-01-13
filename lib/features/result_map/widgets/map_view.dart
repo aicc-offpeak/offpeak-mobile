@@ -38,7 +38,6 @@ class _MapViewState extends State<MapView> {
   LatLng? _currentPosition;
   final _locationService = LocationService();
   dynamic _currentPoi; // 현재 표시 중인 POI (Poi 타입이 불확실하므로 dynamic 사용)
-  final List<dynamic> _recommendedPois = []; // 추천 매장 POI 리스트
   dynamic _userLocationPoi; // 사용자 위치 POI
   List<dynamic> _recommendedPois = []; // 추천 장소 POI 목록
   StreamSubscription<LocationData>? _locationSubscription;

@@ -32,14 +32,25 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   bool _isLoading = false;
   bool _isCongestionInverted = false; // 디버깅용: 혼잡도 반전 여부
   Place? _currentSelectedPlace; // 현재 선택된 장소 (recommended place 선택 시 업데이트)
+  late AnimationController _animationController; // 애니메이션 컨트롤러
 
   @override
   void initState() {
     super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
     _currentSelectedPlace = widget.selectedPlace;
     if (_currentSelectedPlace != null) {
       _loadInsight();
     }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
   }
 
   /// API 데이터를 로드
@@ -264,28 +275,58 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final placeName = selectedPlace.name;
 
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withOpacity(0.95),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
           ),
         ],
-        borderRadius: const BorderRadius.vertical(
-          top: Radius.circular(16),
-        ),
       ),
-      child: _isCongested ? _buildBusyStateSheet() : _buildSmoothStateSheet(),
+      child: Row(
+        children: [
+          // 브랜드 아이콘
+          _buildBrandIcon(placeName, size: 40),
+          const SizedBox(width: 12),
+          // "(장소명) 기준" 텍스트
+          Expanded(
+            child: Text(
+              '$placeName 기준',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+          // 우측에 "다시 선택" 버튼
+          TextButton(
+            onPressed: () {
+              Navigator.pushReplacementNamed(context, Routes.search);
+            },
+            child: const Text(
+              '다시 선택',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.blue,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   /// 여유 상태 하단 패널
   Widget _buildSmoothStateSheet() {
-    final place = _selectedPlaceWithZone!.place;
+    if (_currentPlaceWithZone == null) return const SizedBox.shrink();
+    final place = _currentPlaceWithZone!.place;
     final zone = _displayZone!;
-    final imageUrl = place.imageUrl;
 
     return Container(
       padding: const EdgeInsets.all(20.0),
@@ -295,12 +336,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           Row(
             children: [
               // 브랜드 아이콘
-              _buildBrandIcon(placeName, size: 40),
+              _buildBrandIcon(place.name, size: 40),
               const SizedBox(width: 12),
               // "(장소명) 기준" 텍스트
               Expanded(
                 child: Text(
-                  '$placeName 기준',
+                  '${place.name} 기준',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -624,6 +665,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     // 브랜드명에서 에셋 경로 찾기
     final brandAssetPath = BrandIconMapper.getBrandIconAsset(placeName);
     
+    // 디버깅 로그
+    debugPrint('[ResultMapScreen] 브랜드 아이콘 매칭: placeName="$placeName", assetPath=$brandAssetPath');
+    
     return ClipOval(
       child: Container(
         width: size,
@@ -638,6 +682,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 filterQuality: FilterQuality.high, // 고화질 필터링
                 errorBuilder: (context, error, stackTrace) {
                   // 에셋 로딩 실패 시 placeholder 표시
+                  debugPrint('[ResultMapScreen] 브랜드 아이콘 에셋 로딩 실패: $brandAssetPath, error: $error');
                   return _buildPlaceholderIcon(size);
                 },
               )

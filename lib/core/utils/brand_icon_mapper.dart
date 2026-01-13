@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// 브랜드명 → 로고 이미지 에셋 경로 매핑 테이블
 class BrandIconMapper {
   /// 브랜드명을 에셋 경로로 변환
@@ -21,11 +23,18 @@ class BrandIconMapper {
 
     // 부분 매칭 시도 (예: "스타벅스 강남점" → "스타벅스")
     // 장소명에 브랜드명이 포함되어 있는지 확인
-    for (final entry in brandMap.entries) {
+    // 긴 브랜드명부터 매칭 (예: "스타벅스커피"가 "스타벅스"보다 먼저 매칭되도록)
+    final sortedEntries = brandMap.entries.toList()
+      ..sort((a, b) => b.key.length.compareTo(a.key.length));
+    
+    for (final entry in sortedEntries) {
       if (normalizedName.contains(entry.key)) {
+        debugPrint('[BrandIconMapper] 매칭 성공: "$normalizedName" contains "${entry.key}" → ${entry.value}');
         return entry.value;
       }
     }
+    
+    debugPrint('[BrandIconMapper] 매칭 실패: "$normalizedName"에 해당하는 브랜드를 찾을 수 없음');
 
     return null;
   }
