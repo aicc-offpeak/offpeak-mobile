@@ -8,6 +8,7 @@ import '../../../data/models/insight_request.dart';
 import '../../../data/models/insight_response.dart';
 import '../../../data/models/place.dart';
 import '../../../data/models/place_with_zone.dart';
+import '../../../data/models/place_with_zone.dart';
 import '../../../data/models/zone_info.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../widgets/map_view.dart';
@@ -22,7 +23,8 @@ class ResultMapScreen extends StatefulWidget {
   State<ResultMapScreen> createState() => _ResultMapScreenState();
 }
 
-class _ResultMapScreenState extends State<ResultMapScreen> {
+class _ResultMapScreenState extends State<ResultMapScreen>
+    with SingleTickerProviderStateMixin {
   final _insightRepository = InsightRepository();
   final _locationService = LocationService();
 
@@ -57,23 +59,40 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
         maxAlternatives: 3,
       );
 
+      debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 시작...');
       final result = await _insightRepository.getInsight(request);
       
       if (mounted) {
         switch (result) {
           case ApiSuccess<PlacesInsightResponse>():
+            final isCongested = result.data.selected.zone.isCongested;
+            debugPrint('[ResultMapScreen] ✅ 데이터 로드 성공!');
+            debugPrint('[ResultMapScreen] - selected: ${result.data.selected.place.name}');
+            debugPrint('[ResultMapScreen] - alternatives: ${result.data.alternatives.length}개');
+            debugPrint('[ResultMapScreen] - isCongested: $isCongested');
+            debugPrint('[ResultMapScreen] - zone: ${result.data.selected.zone.crowdingLevel}');
             setState(() {
               _insightData = result.data;
               _isLoading = false;
             });
+            debugPrint('[ResultMapScreen] setState 완료: _insightData=${_insightData != null}');
+            // 혼잡 상태가 변경되면 애니메이션 재시작
+            if (isCongested) {
+              _animationController.forward();
+            } else {
+              _animationController.reset();
+            }
           case ApiFailure<PlacesInsightResponse>():
+            debugPrint('[ResultMapScreen] 데이터 로드 실패: ${result.message}');
             setState(() {
               _isLoading = false;
               // TODO: 에러 메시지를 사용자에게 표시할 수 있도록 처리
             });
         }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('[ResultMapScreen] 예외 발생: $e');
+      debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -124,6 +143,26 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
   void _toggleCongestion() {
     setState(() {
       _isCongestionInverted = !_isCongestionInverted;
+    });
+    // 혼잡 상태가 변경되면 애니메이션 재시작
+    if (_isCongested) {
+      _animationController.forward();
+    } else {
+      _animationController.reset();
+    }
+  }
+
+  void _handleRecommendedPlaceTap(PlaceWithZone placeWithZone) {
+    // TODO: 추천 매장 선택 시 해당 위치로 이동 및 선택 상태 업데이트
+    // 현재는 화면을 다시 로드하지 않고 상태만 업데이트
+    setState(() {
+      // 선택된 매장을 추천 매장으로 변경
+      _insightData = PlacesInsightResponse(
+        selected: placeWithZone,
+        alternatives: _insightData!.alternatives
+            .where((alt) => alt.place.id != placeWithZone.place.id)
+            .toList(),
+      );
     });
   }
 
@@ -225,17 +264,31 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
     final placeName = selectedPlace.name;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.95),
+        color: Colors.white,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
           ),
         ],
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(16),
+        ),
       ),
+      child: _isCongested ? _buildBusyStateSheet() : _buildSmoothStateSheet(),
+    );
+  }
+
+  /// 여유 상태 하단 패널
+  Widget _buildSmoothStateSheet() {
+    final place = _selectedPlaceWithZone!.place;
+    final zone = _displayZone!;
+    final imageUrl = place.imageUrl;
+
+    return Container(
+      padding: const EdgeInsets.all(20.0),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -593,7 +646,7 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
     );
   }
 
-  /// Placeholder 아이콘 (기본 아이콘)
+  /// Placeholder 아이콘
   Widget _buildPlaceholderIcon(double size) {
     return Container(
       width: size,
@@ -607,7 +660,3 @@ class _ResultMapScreenState extends State<ResultMapScreen> {
     );
   }
 }
-
-
-
-
