@@ -49,7 +49,7 @@ class SearchController extends ChangeNotifier {
       lng: _cachedLocation!.longitude,
       size: 5,
       radiusM: 3000,
-      scope: 'food_cafe',
+      // scope 기본값 'all' 사용, category_scope 기본값 'food_cafe' 사용
     );
     final res = await _repository.searchPlaces(request);
     switch (res) {
@@ -87,7 +87,7 @@ class SearchController extends ChangeNotifier {
         lng: _cachedLocation!.longitude,
         size: 5,
         radiusM: 3000,
-        scope: 'food_cafe',
+        // scope 기본값 'all' 사용, category_scope 기본값 'food_cafe' 사용
       );
       final res = await _repository.searchPlaces(request);
       switch (res) {

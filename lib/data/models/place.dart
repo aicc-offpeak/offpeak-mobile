@@ -49,13 +49,18 @@ class Place {
     return {
       'id': id,
       'name': name,
-      'address': address,
+      'address_name': address, // 백엔드는 address_name을 기대
       'lat': latitude,
       'lng': longitude,
       'category_name': category,
       'distance_m': distanceM,
       'category_group_code': categoryGroupCode,
       'image_url': imageUrl,
+      // 백엔드가 기대하는 선택 필드들 (기본값)
+      'category_group_name': '',
+      'phone': '',
+      'road_address_name': '',
+      'place_url': '',
     };
   }
 }

@@ -38,6 +38,7 @@ dependencies:
   dio: ^5.9.0
   flutter_dotenv: ^6.0.0
   geolocator: ^13.0.1
+  path_provider: ^2.1.1
 
 dev_dependencies:
   flutter_test:
@@ -94,3 +95,4 @@ flutter:
   assets:
     - .env
     - assets/icons/
+    - assets/brands/

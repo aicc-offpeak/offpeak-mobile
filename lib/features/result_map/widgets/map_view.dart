@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:kakao_map_sdk/kakao_map_sdk.dart';
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
 
 import '../../../core/location/location_service.dart';
 import '../../../data/models/place.dart';
@@ -13,11 +18,13 @@ import '../../../data/models/zone_info.dart';
 class MapView extends StatefulWidget {
   final Place? selectedPlace;
   final ZoneInfo? zoneInfo;
+  final List<Place>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시)
 
   const MapView({
     super.key,
     this.selectedPlace,
     this.zoneInfo,
+    this.recommendedPlaces,
   });
 
   @override
@@ -31,20 +38,141 @@ class _MapViewState extends State<MapView> {
   final _locationService = LocationService();
   dynamic _currentPoi; // 현재 표시 중인 POI (Poi 타입이 불확실하므로 dynamic 사용)
   dynamic _userLocationPoi; // 사용자 위치 POI
+  List<dynamic> _recommendedPois = []; // 추천 장소 POI 목록
   StreamSubscription<LocationData>? _locationSubscription;
   LatLng? _lastUserLocationPoiPosition; // 마지막으로 POI를 생성한 위치 (throttle용)
   DateTime? _lastUserLocationUpdateTime; // 마지막 업데이트 시간 (throttle용)
 
   static const _zoomLevel = 16;
   
-  // 마커 이미지 크기 (원본 PNG 비율 유지: 가로 11 : 세로 7)
-  // map_marker.png의 원본 비율 11:7을 유지
-  // 예: 110x70, 165x105, 220x140 등
-  static const double _markerWidth = 110.0;  // 11의 배수
-  static const double _markerHeight = 70.0;  // 7의 배수 (11:7 비율 유지)
+  // 마커 이미지 크기 (가로 2: 세로 3 비율, 원본 크기의 1/3)
+  // 2:3 비율: 28x42 (원본 84x126의 1/3)
+  static const double _markerWidth = 28.0;   // 2:3 비율의 가로
+  static const double _markerHeight = 42.0;  // 2:3 비율의 세로
   
   // 사용자 위치 마커 크기 (원래 크기의 1/3)
   static const int _userLocationMarkerSize = 13;
+
+  // 브랜드 아이콘 캐시 (URL -> 로컬 파일 경로)
+  final Map<String, String> _brandIconCache = {};
+  final Dio _dio = Dio();
+
+  /// 혼잡도에 따라 마커 이미지 경로 반환
+  /// zoneInfo가 null이면 회색 마커 (API 실패 또는 정보 없음)
+  String _getMarkerImagePath(ZoneInfo? zoneInfo) {
+    if (zoneInfo == null || zoneInfo.crowdingLevel.isEmpty) {
+      return 'assets/icons/marker_grey.png';
+    }
+
+    final crowdingLevel = zoneInfo.crowdingLevel;
+    
+    if (crowdingLevel == '여유' || crowdingLevel == '원활') {
+      return 'assets/icons/marker_green.png';
+    } else if (crowdingLevel == '보통') {
+      return 'assets/icons/marker_yellow.png';
+    } else if (crowdingLevel == '약간 붐빔') {
+      return 'assets/icons/marker_orange.png';
+    } else if (crowdingLevel == '붐빔') {
+      return 'assets/icons/marker_red.png';
+    }
+    
+    return 'assets/icons/marker_grey.png'; // 알 수 없는 혼잡도 레벨
+  }
+
+  /// 브랜드 아이콘을 다운로드하고 로컬 파일 경로 반환
+  /// 실패 시 null 반환
+  Future<String?> _downloadBrandIcon(String? imageUrl) async {
+    // imageUrl이 없거나 비어있으면 null 반환
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return null;
+    }
+
+    // 캐시에 있으면 캐시된 경로 반환
+    if (_brandIconCache.containsKey(imageUrl)) {
+      final cachedPath = _brandIconCache[imageUrl]!;
+      if (await File(cachedPath).exists()) {
+        return cachedPath;
+      } else {
+        // 캐시된 파일이 없으면 캐시에서 제거
+        _brandIconCache.remove(imageUrl);
+      }
+    }
+
+    try {
+      // 임시 디렉토리 가져오기
+      final tempDir = await getTemporaryDirectory();
+      final cacheDir = Directory(path.join(tempDir.path, 'brand_icons'));
+      if (!await cacheDir.exists()) {
+        await cacheDir.create(recursive: true);
+      }
+
+      // URL에서 파일명 생성 (해시 사용)
+      final urlHash = imageUrl.hashCode.toString();
+      final extension = path.extension(imageUrl).isNotEmpty 
+          ? path.extension(imageUrl) 
+          : '.png';
+      final fileName = 'brand_$urlHash$extension';
+      final filePath = path.join(cacheDir.path, fileName);
+
+      // 이미 파일이 있으면 파일 경로 반환
+      if (await File(filePath).exists()) {
+        _brandIconCache[imageUrl] = filePath;
+        return filePath;
+      }
+
+      // 네트워크에서 이미지 다운로드
+      debugPrint('[MapView] 브랜드 아이콘 다운로드 중: $imageUrl');
+      final response = await _dio.get<List<int>>(
+        imageUrl,
+        options: Options(responseType: ResponseType.bytes),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final bytes = Uint8List.fromList(response.data!);
+        
+        // 파일로 저장 (캐싱)
+        final file = File(filePath);
+        await file.writeAsBytes(bytes);
+        
+        // 캐시에 추가
+        _brandIconCache[imageUrl] = filePath;
+        debugPrint('[MapView] ✅ 브랜드 아이콘 다운로드 완료: $filePath');
+        return filePath;
+      } else {
+        debugPrint('[MapView] ❌ 브랜드 아이콘 다운로드 실패: HTTP ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      debugPrint('[MapView] ❌ 브랜드 아이콘 다운로드 에러: $e');
+      return null;
+    }
+  }
+
+  /// 마커 아이콘 생성 (브랜드 아이콘 또는 기본 마커)
+  /// 현재는 KakaoMap SDK가 네트워크 이미지를 직접 지원하지 않으므로 기본 마커 사용
+  /// 브랜드 아이콘은 다운로드하여 캐시에 저장 (나중에 사용 가능)
+  Future<KImage> _createMarkerIcon(Place? place, ZoneInfo? zoneInfo, {double widthMultiplier = 1.0, double heightMultiplier = 1.0}) async {
+    // 브랜드 아이콘 URL이 있으면 다운로드하여 캐시에 저장 (백그라운드)
+    if (place?.imageUrl != null && place!.imageUrl.isNotEmpty && place.imageUrl.startsWith('http')) {
+      // 비동기로 다운로드 (결과를 기다리지 않음)
+      _downloadBrandIcon(place.imageUrl).then((path) {
+        if (path != null) {
+          debugPrint('[MapView] ✅ 브랜드 아이콘 다운로드 완료 (캐시됨): $path');
+        }
+      }).catchError((e) {
+        debugPrint('[MapView] 브랜드 아이콘 다운로드 실패 (무시): $e');
+      });
+      debugPrint('[MapView] 브랜드 아이콘 다운로드 시작: ${place.imageUrl}');
+    }
+    
+    // 현재는 KakaoMap SDK가 네트워크 이미지를 직접 지원하지 않으므로 기본 마커 사용
+    // TODO: 나중에 네이티브 플러그인 또는 다른 방법으로 브랜드 아이콘 표시 구현
+    return KImage.fromAsset(
+      _getMarkerImagePath(zoneInfo),
+      (_markerWidth * widthMultiplier).toInt(),
+      (_markerHeight * heightMultiplier).toInt(),
+    );
+  }
 
   @override
   void initState() {
@@ -65,9 +193,10 @@ class _MapViewState extends State<MapView> {
   @override
   void didUpdateWidget(MapView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // zoneInfo나 selectedPlace가 변경되면 POI 업데이트 및 카메라 이동
+    // zoneInfo나 selectedPlace, recommendedPlaces가 변경되면 POI 업데이트 및 카메라 이동
     if (widget.zoneInfo != oldWidget.zoneInfo ||
-        widget.selectedPlace?.id != oldWidget.selectedPlace?.id) {
+        widget.selectedPlace?.id != oldWidget.selectedPlace?.id ||
+        widget.recommendedPlaces?.length != oldWidget.recommendedPlaces?.length) {
       // 선택된 매장이 변경되면 위치 업데이트 및 카메라 이동
       if (widget.selectedPlace != null) {
         setState(() {
@@ -81,6 +210,9 @@ class _MapViewState extends State<MapView> {
       // 비동기 함수이므로 에러 처리 추가
       _updateSelectedPlacePoi().catchError((e) {
         debugPrint('[MapView] POI 업데이트 에러 (didUpdateWidget): $e');
+      });
+      _updateRecommendedPlacesPoi().catchError((e) {
+        debugPrint('[MapView] 추천 장소 POI 업데이트 에러 (didUpdateWidget): $e');
       });
     }
     // 사용자 위치는 스트림으로 처리하므로 didUpdateWidget에서는 처리하지 않음
@@ -137,6 +269,9 @@ class _MapViewState extends State<MapView> {
         // 비동기 함수이므로 에러 처리 추가
         _updateSelectedPlacePoi().catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
+        });
+        _updateRecommendedPlacesPoi().catchError((e) {
+          debugPrint('[MapView] 추천 장소 POI 업데이트 에러: $e');
         });
         // 지도 준비 완료 후 현재 위치를 가져와서 POI 추가
         _loadInitialUserLocation().catchError((e) {
@@ -202,13 +337,11 @@ class _MapViewState extends State<MapView> {
         debugPrint('[MapView] POI 추가 시도: $poiText');
         
         // PoiStyle에 PNG 기반 아이콘 설정
-        // assets/icons/map_marker.png를 사용하여 마커 표시
+        // 브랜드 아이콘이 있으면 사용, 없으면 혼잡도에 따라 적절한 색상의 마커 이미지 사용
         // 원본 PNG 비율을 유지하여 찌그러짐 방지
-        // KImage.fromAsset은 3개의 positional argument를 받음: (assetPath, width, height)
-        final markerIcon = KImage.fromAsset(
-          'assets/icons/map_marker.png',
-          _markerWidth.toInt(), // 원본 비율 유지
-          _markerHeight.toInt(), // 원본 비율 유지
+        final markerIcon = await _createMarkerIcon(
+          widget.selectedPlace,
+          widget.zoneInfo,
         );
         
         // anchor는 KPoint 타입을 사용 (x, y = 아이콘 하단 중앙)
@@ -219,7 +352,7 @@ class _MapViewState extends State<MapView> {
           applyDpScale: true,
         );
         
-        debugPrint('[MapView] PoiStyle 생성: icon=map_marker.png, size=${_markerWidth.toInt()}x${_markerHeight.toInt()}, anchor=(0.5, 1.0)');
+        debugPrint('[MapView] PoiStyle 생성: 브랜드 아이콘 또는 기본 마커, size=${_markerWidth.toInt()}x${_markerHeight.toInt()}, anchor=(0.5, 1.0)');
         
         // addPoi는 Future<Poi>를 반환하므로 await 필요
         // text 파라미터로 텍스트 전달
@@ -252,6 +385,65 @@ class _MapViewState extends State<MapView> {
       debugPrint('[MapView] ❌ POI 추가 최종 실패: $e');
       debugPrint('[MapView] 에러 타입: ${e.runtimeType}');
       debugPrint('[MapView] 에러 스택: ${e.toString()}');
+    }
+  }
+
+  /// 추천 장소 POI 업데이트
+  Future<void> _updateRecommendedPlacesPoi() async {
+    if (!_isMapReady || _controller == null) {
+      debugPrint('[MapView] 추천 장소 POI 업데이트 스킵: 지도가 준비되지 않음');
+      return;
+    }
+
+    // 기존 추천 장소 POI 제거
+    for (final poi in _recommendedPois) {
+      try {
+        await _controller!.labelLayer.removePoi(poi);
+      } catch (e) {
+        debugPrint('[MapView] 추천 장소 POI 제거 실패: $e');
+      }
+    }
+    _recommendedPois.clear();
+
+    // 추천 장소가 없으면 종료
+    if (widget.recommendedPlaces == null || widget.recommendedPlaces!.isEmpty) {
+      return;
+    }
+
+    // 새 추천 장소 POI 추가 (최대 3개)
+    final placesToShow = widget.recommendedPlaces!.take(3).toList();
+    for (final place in placesToShow) {
+      try {
+        final position = LatLng(place.latitude, place.longitude);
+        final poiText = '${place.name}\n여유';
+
+        // 추천 장소는 선택 장소보다 작은 마커 사용 (항상 여유 상태이므로 green)
+        // 브랜드 아이콘이 있으면 사용, 없으면 기본 마커 사용
+        // 추천 장소는 항상 여유 상태이므로 zoneInfo를 null로 전달 (기본 green 마커)
+        final markerIcon = await _createMarkerIcon(
+          place,
+          null, // 추천 장소는 항상 여유 상태
+          widthMultiplier: 0.8,
+          heightMultiplier: 0.8,
+        );
+
+        final poiStyle = PoiStyle(
+          icon: markerIcon,
+          anchor: KPoint(0.5, 1.0),
+          applyDpScale: true,
+        );
+
+        final addedPoi = await _controller!.labelLayer.addPoi(
+          position,
+          text: poiText,
+          style: poiStyle,
+        );
+
+        _recommendedPois.add(addedPoi);
+        debugPrint('[MapView] ✅ 추천 장소 POI 추가: ${place.name}');
+      } catch (e) {
+        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${place.name}, $e');
+      }
     }
   }
 
@@ -448,10 +640,29 @@ class _MapViewState extends State<MapView> {
         debugPrint('[MapView] 사용자 위치 POI 정리 실패: $e');
       }
     }
+    // 추천 장소 POI 정리
+    if (_controller != null && _recommendedPois.isNotEmpty) {
+      for (final poi in _recommendedPois) {
+        try {
+          if (poi is Future) {
+            (poi as Future).then((p) {
+              _controller?.labelLayer.removePoi(p);
+            }).catchError((e) {
+              debugPrint('[MapView] 추천 장소 POI 정리 실패: $e');
+            });
+          } else {
+            _controller!.labelLayer.removePoi(poi);
+          }
+        } catch (e) {
+          debugPrint('[MapView] 추천 장소 POI 정리 실패: $e');
+        }
+      }
+    }
     _controller = null;
     _isMapReady = false;
     _currentPoi = null;
     _userLocationPoi = null;
+    _recommendedPois.clear();
     _lastUserLocationPoiPosition = null;
     _lastUserLocationUpdateTime = null;
     super.dispose();

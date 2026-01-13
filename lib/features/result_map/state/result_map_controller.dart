@@ -28,9 +28,9 @@ class ResultMapController extends ChangeNotifier {
 
     final location = await _locationService.getCurrentPosition();
     final request = SearchRequest(
-      keyword: keyword,
-      latitude: location.latitude,
-      longitude: location.longitude,
+      query: keyword,
+      lat: location.latitude,
+      lng: location.longitude,
     );
 
     final result = await _repository.searchPlaces(request);

@@ -4,7 +4,8 @@ class SearchRequest {
   final double lng;
   final int size;
   final int radiusM;
-  final String scope;
+  final String scope; // "cache" | "api" | "all"
+  final String categoryScope; // "cafe" | "food" | "food_cafe" | "all"
 
   const SearchRequest({
     required this.query,
@@ -12,7 +13,8 @@ class SearchRequest {
     required this.lng,
     this.size = 5,
     this.radiusM = 3000,
-    this.scope = 'food_cafe',
+    this.scope = 'all', // 기본값: "all" (cache + api)
+    this.categoryScope = 'food_cafe', // 기본값: "food_cafe"
   });
 
   Map<String, String> toQuery() => {
@@ -22,6 +24,7 @@ class SearchRequest {
         'size': size.toString(),
         'radius_m': radiusM.toString(),
         'scope': scope,
+        'category_scope': categoryScope,
       };
 }
 
