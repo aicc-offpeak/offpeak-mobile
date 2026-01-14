@@ -20,12 +20,16 @@ class MapView extends StatefulWidget {
   final Place? selectedPlace;
   final ZoneInfo? zoneInfo;
   final List<PlaceWithZone>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시, zoneInfo 포함)
+  final double? topCardHeight; // 상단 카드 높이 (픽셀)
+  final double? bottomCardHeight; // 하단 카드 높이 (픽셀)
 
   const MapView({
     super.key,
     this.selectedPlace,
     this.zoneInfo,
     this.recommendedPlaces,
+    this.topCardHeight,
+    this.bottomCardHeight,
   });
 
   @override
@@ -706,6 +710,37 @@ class _MapViewState extends State<MapView> {
     }
 
     debugPrint('[MapView] 카메라 위치: $_currentPosition');
+    
+    // 상단/하단 카드 영역을 제외한 지도 영역의 중심에 마커가 오도록 위치 조정
+    final screenHeight = MediaQuery.of(context).size.height;
+    final topCardHeight = widget.topCardHeight ?? 100.0; // 기본값: 100px
+    final bottomCardHeight = widget.bottomCardHeight ?? 250.0; // 기본값: 250px
+    
+    // 상단 카드와 하단 카드의 중간 지점을 기준으로 마커를 위로 이동
+    // 위도 1도 ≈ 111km, 줌 레벨 16에서 화면 높이의 절반만큼 위로 이동하려면
+    // 줌 레벨 16에서 화면 높이 ≈ 1km 정도이므로
+    // 위도 조정량 = (topCardHeight + bottomCardHeight) / 2 / screenHeight * (화면에 표시되는 위도 범위)
+    // 줌 레벨 16에서 화면에 표시되는 위도 범위는 대략 0.01도 정도
+    final offsetRatio = (topCardHeight + bottomCardHeight) / 2 / screenHeight;
+    // 줌 레벨에 따라 조정: 줌 레벨 16에서 화면 높이의 50%만큼 위로 이동하려면 약 0.005도
+    // 하단 카드가 오버레이되어 있으므로 더 큰 조정량 필요 (기존의 2배)
+    final latitudeOffset = offsetRatio * 0.01; // 줌 레벨 16 기준 대략적인 위도 조정량
+    
+    final adjustedPosition = LatLng(
+      _currentPosition!.latitude + latitudeOffset,
+      _currentPosition!.longitude,
+    );
+    
+    debugPrint('[MapView] 원래 위치: $_currentPosition');
+    debugPrint('[MapView] 조정된 위치: $adjustedPosition');
+    debugPrint('[MapView] 상단 카드 높이: $topCardHeight, 하단 카드 높이: $bottomCardHeight');
+    debugPrint('[MapView] 위도 조정량: $latitudeOffset');
+    
+    // 카메라 위치 업데이트
+    setState(() {
+      _currentPosition = adjustedPosition;
+    });
+    
     // KakaoMapOption의 position이 이미 마커 좌표로 설정되어 있으므로,
     // 지도는 자동으로 올바른 위치에 표시됩니다.
     debugPrint('[MapView] 지도가 선택된 위치에 표시됩니다');

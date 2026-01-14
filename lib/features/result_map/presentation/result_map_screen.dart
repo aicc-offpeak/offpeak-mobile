@@ -8,7 +8,6 @@ import '../../../data/models/insight_request.dart';
 import '../../../data/models/insight_response.dart';
 import '../../../data/models/place.dart';
 import '../../../data/models/place_with_zone.dart';
-import '../../../data/models/place_with_zone.dart';
 import '../../../data/models/recommend_times_response.dart';
 import '../../../data/models/zone_info.dart';
 import '../../../data/repositories/insight_repository.dart';
@@ -55,6 +54,29 @@ enum ViewState {
   tempSelectedFromRecommendation,
 }
 
+/// TIME 탭 상태
+enum TimeTabState {
+  loading,
+  success,
+  empty,
+  error,
+}
+
+/// PLACE 탭 상태
+enum PlaceTabState {
+  loading,
+  success,
+  emptyFirst,
+  emptyExpanded,
+  error,
+}
+
+/// 반경 모드
+enum RadiusMode {
+  base,      // 500m
+  expanded,  // 1000m
+}
+
 /// Decision-focused result screen showing map with congestion information
 class ResultMapScreen extends StatefulWidget {
   final Place? selectedPlace;
@@ -74,22 +96,28 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   PlacesInsightResponse? _insightData;
   bool _isLoading = false;
   bool _showLongLoadingIndicator = false; // 3초 이상 로딩 시 원형 프로그레스바 표시
-  bool _isCongestionInverted = false; // 디버깅용: 혼잡도 반전 여부
   bool _isDebugMode = false; // 디버깅 모드 여부
   String _selectedCrowdingLevel = '붐빔'; // 선택된 혼잡도 레벨 (디버깅용)
   Place? _currentSelectedPlace; // 현재 선택된 장소 (recommended place 선택 시 업데이트)
   late AnimationController _animationController; // 애니메이션 컨트롤러
-  bool _isBestTimeExpanded = false; // 추천 시간대 아코디언 확장 여부
   RecommendTimesResponse? _recommendTimesData; // 추천 시간대 데이터
   String _selectedTab = 'place'; // 하단 시트의 선택된 탭 ('time' or 'place')
-  bool _isLoadingRecommendTimes = false; // 추천 시간대 로딩 상태
-  String? _recommendTimesError; // 추천 시간대 에러 메시지
+  
+  // 탭별 상태 관리
+  TimeTabState _timeTabState = TimeTabState.loading;
+  PlaceTabState _placeTabState = PlaceTabState.loading;
+  RadiusMode _placeRadiusMode = RadiusMode.base; // PLACE 탭 반경 모드
+  String? _timeTabError; // TIME 탭 에러 메시지
+  String? _placeTabError; // PLACE 탭 에러 메시지
   
   // 임시 선택 상태 관리
   ViewState _viewState = ViewState.baseSelectedView;
   PlaceWithZone? _baseSelectedPlaceWithZone; // 원래 선택된 장소 (스냅샷)
   List<PlaceWithZone> _baseRecommendations = []; // 원래 추천 리스트 (스냅샷)
   PlaceWithZone? _tempSelectedPlaceWithZone; // 임시 선택된 장소
+  
+  // 하단 카드 접기/펼치기 상태 (기본값: 펼침)
+  bool _isBottomSheetExpanded = true;
 
   @override
   void initState() {
@@ -101,7 +129,28 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     _currentSelectedPlace = widget.selectedPlace;
     if (_currentSelectedPlace != null) {
       _loadInsight();
-      _loadRecommendTimes();
+      // TIME 탭이 기본 선택되어 있으면 시간 데이터도 로드
+      if (_selectedTab == 'time') {
+        _loadRecommendTimes();
+      }
+    }
+  }
+  
+  /// 탭 전환 핸들러
+  void _onTabChanged(String tab) {
+    setState(() {
+      _selectedTab = tab;
+    });
+    
+    // 탭 전환 시 해당 탭의 데이터 로드
+    if (tab == 'time') {
+      if (_timeTabState != TimeTabState.success || _recommendTimesData == null) {
+        _loadRecommendTimes();
+      }
+    } else if (tab == 'place') {
+      if (_placeTabState != PlaceTabState.success || _insightData == null) {
+        _loadInsight();
+      }
     }
   }
 
@@ -111,9 +160,17 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     super.dispose();
   }
 
-  /// API 데이터를 로드
-  Future<void> _loadInsight() async {
+  /// API 데이터를 로드 (PLACE 탭용)
+  Future<void> _loadInsight({bool isRetry = false}) async {
     if (_currentSelectedPlace == null) return;
+
+    // PLACE 탭이 활성화되어 있을 때만 상태 업데이트
+    if (_selectedTab == 'place' && !isRetry) {
+      setState(() {
+        _placeTabState = PlaceTabState.loading;
+        _placeTabError = null;
+      });
+    }
 
     setState(() {
       _isLoading = true;
@@ -131,35 +188,53 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
     try {
       final location = await _locationService.getCurrentPosition();
+      final radius = _placeRadiusMode == RadiusMode.expanded ? 1000 : 500;
       final request = PlacesInsightRequest(
         selected: _currentSelectedPlace!,
         userLat: location.latitude,
         userLng: location.longitude,
+        radiusM: radius,
         maxAlternatives: 3,
       );
 
-      debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 시작...');
+      debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 시작... (반경: ${radius}m)');
       final result = await _insightRepository.getInsight(request);
       
       if (mounted) {
         switch (result) {
           case ApiSuccess<PlacesInsightResponse>():
             final isCongested = result.data.selected.zone.isCongested;
+            final alternatives = result.data.alternatives;
             debugPrint('[ResultMapScreen] ✅ 데이터 로드 성공!');
             debugPrint('[ResultMapScreen] - selected: ${result.data.selected.place.name}');
-            debugPrint('[ResultMapScreen] - alternatives: ${result.data.alternatives.length}개');
+            debugPrint('[ResultMapScreen] - alternatives: ${alternatives.length}개');
             debugPrint('[ResultMapScreen] - isCongested: $isCongested');
             debugPrint('[ResultMapScreen] - zone: ${result.data.selected.zone.crowdingLevel}');
+            
             setState(() {
               _insightData = result.data;
               _isLoading = false;
               _showLongLoadingIndicator = false;
               _isDebugMode = false; // 실제 API 모드
               _selectedCrowdingLevel = result.data.selected.zone.crowdingLevel; // 실제 혼잡도로 초기화
+              
+              // PLACE 탭 상태 업데이트
+              if (_selectedTab == 'place') {
+                if (alternatives.isEmpty) {
+                  if (_placeRadiusMode == RadiusMode.base) {
+                    _placeTabState = PlaceTabState.emptyFirst;
+                  } else {
+                    _placeTabState = PlaceTabState.emptyExpanded;
+                  }
+                } else {
+                  _placeTabState = PlaceTabState.success;
+                }
+              }
+              
               // 검색 매장과 추천 매장 스냅샷 캡처 (한 번만, API 성공 시)
               if (_baseSelectedPlaceWithZone == null) {
                 _baseSelectedPlaceWithZone = result.data.selected;
-                _baseRecommendations = List.from(result.data.alternatives);
+                _baseRecommendations = List.from(alternatives);
                 debugPrint('[ResultMapScreen] ✅ 검색 매장 및 추천 매장 스냅샷 캡처 완료');
                 debugPrint('[ResultMapScreen] - 검색 매장: ${_baseSelectedPlaceWithZone!.place.name}');
                 debugPrint('[ResultMapScreen] - 추천 매장: ${_baseRecommendations.length}개');
@@ -174,20 +249,58 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             }
           case ApiFailure<PlacesInsightResponse>():
             debugPrint('[ResultMapScreen] 데이터 로드 실패: ${result.message}');
-            debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
-            // API 실패 시 디버깅 모드로 전환
-            _loadDebugModeData();
+            if (_selectedTab == 'place') {
+              setState(() {
+                _placeTabState = PlaceTabState.error;
+                _placeTabError = result.message;
+              });
+            } else {
+              debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
+              // API 실패 시 디버깅 모드로 전환 (초기 로드 시에만)
+              _loadDebugModeData();
+            }
         }
       }
     } catch (e, stackTrace) {
       debugPrint('[ResultMapScreen] 예외 발생: $e');
       debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
       if (mounted) {
-        debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
-        // 예외 발생 시 디버깅 모드로 전환
-        _loadDebugModeData();
+        if (_selectedTab == 'place') {
+          setState(() {
+            _placeTabState = PlaceTabState.error;
+            _placeTabError = e.toString();
+          });
+        } else {
+          debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
+          // 예외 발생 시 디버깅 모드로 전환 (초기 로드 시에만)
+          _loadDebugModeData();
+        }
       }
     }
+  }
+  
+  /// 반경 확장 및 재조회
+  Future<void> _expandRadiusAndRefetch() async {
+    setState(() {
+      _placeRadiusMode = RadiusMode.expanded;
+      _placeTabState = PlaceTabState.loading;
+      _placeTabError = null;
+    });
+    await _loadInsight();
+  }
+  
+  /// PLACE 탭 재시도
+  Future<void> _retryPlace() async {
+    setState(() {
+      _placeTabState = PlaceTabState.loading;
+      _placeTabError = null;
+    });
+    await _loadInsight(isRetry: true);
+  }
+  
+  /// TIME 탭 재시도
+  Future<void> _retryTime() async {
+    await _loadRecommendTimes();
   }
 
   /// 디버깅 모드 데이터 로드
@@ -197,15 +310,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
     debugPrint('[ResultMapScreen] 디버깅 모드 데이터 생성 중...');
     
-    // 선택 매장: 검색 결과 사용, 혼잡도는 "붐빔" (매우 혼잡)
-    final selectedPlace = _currentSelectedPlace!;
-    final selectedZone = ZoneInfo(
+    // 검색 매장: base 스냅샷이 있으면 사용, 없으면 현재 선택된 장소 사용
+    final basePlace = _baseSelectedPlaceWithZone?.place ?? _currentSelectedPlace!;
+    final baseZone = _baseSelectedPlaceWithZone?.zone ?? ZoneInfo(
       code: 'debug_selected',
-      name: selectedPlace.name,
-      lat: selectedPlace.latitude,
-      lng: selectedPlace.longitude,
-      distanceM: selectedPlace.distanceM,
-      crowdingLevel: _selectedCrowdingLevel, // 선택된 혼잡도 레벨 사용
+      name: basePlace.name,
+      lat: basePlace.latitude,
+      lng: basePlace.longitude,
+      distanceM: basePlace.distanceM,
+      crowdingLevel: _selectedCrowdingLevel,
       crowdingRank: _selectedCrowdingLevel == '붐빔' ? 1 : 
                     _selectedCrowdingLevel == '약간 붐빔' ? 2 :
                     _selectedCrowdingLevel == '보통' ? 3 : 4,
@@ -215,6 +328,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       crowdingUpdatedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       crowdingMessage: '디버깅 모드',
     );
+    
+    // 검색 매장의 혼잡도만 업데이트
+    final selectedZone = baseZone.copyWithCrowdingLevel(_selectedCrowdingLevel);
 
     // 추천 매장 3곳 하드코딩 (가산 지역)
     final recommendedPlaces = [
@@ -295,10 +411,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       ),
     ];
 
+    // 현재 선택된 장소가 검색 매장인지 확인
+    final currentSelectedPlace = _insightData?.selected.place ?? _currentSelectedPlace!;
+    final isBaseSelected = _baseSelectedPlaceWithZone != null && 
+                          currentSelectedPlace.id == basePlace.id;
+    
     final debugData = PlacesInsightResponse(
       selected: PlaceWithZone(
-        place: selectedPlace,
-        zone: selectedZone,
+        place: currentSelectedPlace,
+        zone: isBaseSelected ? selectedZone : (_insightData?.selected.zone ?? selectedZone),
       ),
       alternatives: recommendedPlaces,
     );
@@ -308,39 +429,196 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _isLoading = false;
       _showLongLoadingIndicator = false;
       _isDebugMode = true;
-      // 추천 리스트가 처음 표시될 때 base 스냅샷 캡처
+      _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
+      // 추천 리스트가 처음 표시될 때 base 스냅샷 캡처 (검색 매장만 저장)
       if (debugData.alternatives.isNotEmpty && _viewState == ViewState.baseSelectedView) {
-        _baseSelectedPlaceWithZone = debugData.selected;
+        _baseSelectedPlaceWithZone = PlaceWithZone(
+          place: basePlace,
+          zone: selectedZone,
+        );
         _baseRecommendations = List.from(debugData.alternatives);
+      } else if (_baseSelectedPlaceWithZone != null) {
+        // base 스냅샷이 이미 있으면 검색 매장의 혼잡도만 업데이트
+        _baseSelectedPlaceWithZone = PlaceWithZone(
+          place: _baseSelectedPlaceWithZone!.place,
+          zone: selectedZone,
+        );
       }
     });
 
     debugPrint('[ResultMapScreen] ✅ 디버깅 모드 데이터 생성 완료');
-    debugPrint('[ResultMapScreen] - selected: ${selectedPlace.name}, 혼잡도: $_selectedCrowdingLevel');
+    debugPrint('[ResultMapScreen] - 검색 매장: ${basePlace.name}, 혼잡도: $_selectedCrowdingLevel');
     debugPrint('[ResultMapScreen] - alternatives: ${recommendedPlaces.length}개');
   }
 
-  /// 혼잡도 레벨 변경 (디버깅용)
+  /// 혼잡도 레벨 변경 (디버깅용) - 검색 매장에만 적용
   void _onCrowdingLevelChanged(String newLevel) {
     setState(() {
       _selectedCrowdingLevel = newLevel;
+      _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
     });
     
-    // 디버깅 모드인 경우 데이터 다시 생성
-    if (_isDebugMode && _insightData != null) {
+    // 검색 매장이 없으면 처리하지 않음
+    if (_baseSelectedPlaceWithZone == null && _insightData == null) return;
+    
+    // 붐빔이나 약간 붐빔으로 변경된 경우 추천 매장 API 호출
+    final isCrowded = newLevel == '붐빔' || newLevel == '약간 붐빔';
+    
+    if (isCrowded && _currentSelectedPlace != null) {
+      // 실제 API를 호출하여 추천 매장 가져오기
+      debugPrint('[ResultMapScreen] 디버그: 혼잡도가 붐빔/약간 붐빔으로 변경됨, 추천 매장 API 호출');
+      _loadInsightForDebugMode();
+    } else if (_isDebugMode && _insightData != null) {
+      // 디버깅 모드이고 혼잡하지 않은 경우 mock 데이터 사용
       _loadDebugModeData();
     } else if (_insightData != null) {
-      // 실제 API 모드인 경우 선택된 장소의 혼잡도만 업데이트
-      final updatedZone = _insightData!.selected.zone.copyWithCrowdingLevel(newLevel);
+      // 실제 API 모드인 경우: 검색 매장의 혼잡도만 업데이트
+      final baseZone = _baseSelectedPlaceWithZone?.zone ?? _insightData!.selected.zone;
+      final updatedBaseZone = baseZone.copyWithCrowdingLevel(newLevel);
+      
+      // base 스냅샷 업데이트
+      if (_baseSelectedPlaceWithZone != null) {
+        _baseSelectedPlaceWithZone = PlaceWithZone(
+          place: _baseSelectedPlaceWithZone!.place,
+          zone: updatedBaseZone,
+        );
+      }
+      
+      // 현재 선택된 장소가 검색 매장인 경우에만 혼잡도 업데이트
+      final isBaseSelected = _baseSelectedPlaceWithZone != null && 
+                            _insightData!.selected.place.id == _baseSelectedPlaceWithZone!.place.id;
+      
       setState(() {
         _insightData = PlacesInsightResponse(
           selected: PlaceWithZone(
             place: _insightData!.selected.place,
-            zone: updatedZone,
+            zone: isBaseSelected ? updatedBaseZone : _insightData!.selected.zone,
           ),
           alternatives: _insightData!.alternatives,
         );
       });
+    }
+  }
+  
+  /// 디버그 모드용 추천 매장 API 호출 (혼잡도 변경 시)
+  Future<void> _loadInsightForDebugMode() async {
+    if (_currentSelectedPlace == null) return;
+
+    setState(() {
+      _isLoading = true;
+      _showLongLoadingIndicator = false;
+    });
+
+    // 3초 후에도 로딩 중이면 원형 프로그레스바 표시
+    Future.delayed(const Duration(seconds: 3), () {
+      if (_isLoading && mounted) {
+        setState(() {
+          _showLongLoadingIndicator = true;
+        });
+      }
+    });
+
+    try {
+      final location = await _locationService.getCurrentPosition();
+      final radius = _placeRadiusMode == RadiusMode.expanded ? 1000 : 500;
+      final request = PlacesInsightRequest(
+        selected: _currentSelectedPlace!,
+        userLat: location.latitude,
+        userLng: location.longitude,
+        radiusM: radius,
+        maxAlternatives: 3,
+      );
+
+      debugPrint('[ResultMapScreen] 디버그 모드: 추천 매장 API 호출 (반경: ${radius}m)');
+      final result = await _insightRepository.getInsight(request);
+      
+      if (mounted) {
+        switch (result) {
+          case ApiSuccess<PlacesInsightResponse>():
+            final alternatives = result.data.alternatives;
+            debugPrint('[ResultMapScreen] ✅ 디버그 모드: 추천 매장 API 성공!');
+            debugPrint('[ResultMapScreen] - alternatives: ${alternatives.length}개');
+            
+            // 검색 매장의 혼잡도만 업데이트 (추천 매장의 혼잡도는 변경하지 않음)
+            final baseZone = _baseSelectedPlaceWithZone?.zone ?? result.data.selected.zone;
+            final updatedBaseZone = baseZone.copyWithCrowdingLevel(_selectedCrowdingLevel);
+            
+            // 현재 선택된 장소가 검색 매장인지 확인
+            final isBaseSelected = _baseSelectedPlaceWithZone != null && 
+                                  result.data.selected.place.id == _baseSelectedPlaceWithZone!.place.id;
+            
+            setState(() {
+              _insightData = PlacesInsightResponse(
+                selected: PlaceWithZone(
+                  place: result.data.selected.place,
+                  zone: isBaseSelected ? updatedBaseZone : result.data.selected.zone,
+                ),
+                alternatives: alternatives, // 추천 매장의 혼잡도는 API 결과 그대로 사용
+              );
+              _isLoading = false;
+              _showLongLoadingIndicator = false;
+              _isDebugMode = true; // 디버그 모드 유지
+              _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
+              
+              // PLACE 탭 상태 업데이트
+              if (_selectedTab == 'place') {
+                if (alternatives.isEmpty) {
+                  if (_placeRadiusMode == RadiusMode.base) {
+                    _placeTabState = PlaceTabState.emptyFirst;
+                  } else {
+                    _placeTabState = PlaceTabState.emptyExpanded;
+                  }
+                } else {
+                  _placeTabState = PlaceTabState.success;
+                }
+              }
+              
+              // base 스냅샷 업데이트 (검색 매장의 혼잡도만 업데이트)
+              if (_baseSelectedPlaceWithZone == null) {
+                _baseSelectedPlaceWithZone = PlaceWithZone(
+                  place: result.data.selected.place,
+                  zone: updatedBaseZone,
+                );
+                _baseRecommendations = List.from(alternatives);
+              } else {
+                // base 스냅샷의 zone만 업데이트 (추천 매장은 API 결과 사용)
+                _baseSelectedPlaceWithZone = PlaceWithZone(
+                  place: _baseSelectedPlaceWithZone!.place,
+                  zone: updatedBaseZone,
+                );
+                _baseRecommendations = List.from(alternatives);
+              }
+            });
+            
+            // 혼잡 상태이면 애니메이션 재시작
+            if (_selectedCrowdingLevel == '붐빔' || _selectedCrowdingLevel == '약간 붐빔') {
+              _animationController.forward();
+            } else {
+              _animationController.reset();
+            }
+          case ApiFailure<PlacesInsightResponse>():
+            debugPrint('[ResultMapScreen] 디버그 모드: 추천 매장 API 실패: ${result.message}');
+            if (mounted) {
+              setState(() {
+                _isLoading = false;
+                _showLongLoadingIndicator = false;
+              });
+              // API 실패 시 mock 데이터 사용
+              _loadDebugModeData();
+            }
+        }
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[ResultMapScreen] 디버그 모드: 추천 매장 API 예외: $e');
+      debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _showLongLoadingIndicator = false;
+        });
+        // 예외 발생 시 mock 데이터 사용
+        _loadDebugModeData();
+      }
     }
   }
 
@@ -351,26 +629,23 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }
 
   /// 혼잡도 반전을 적용한 ZoneInfo
-  /// 디버깅 모드에서는 선택된 혼잡도 레벨 사용
+  /// 디버깅 모드에서는 선택된 혼잡도 레벨 사용 (검색 매장에만 적용)
   /// viewState에 따라 현재 선택된 장소의 zone 반환
   ZoneInfo? get _displayZone {
     if (_insightData == null) return null;
     
-    // 임시 선택 상태일 때는 임시 선택된 장소의 zone 사용
-    final zoneToUse = _viewState == ViewState.tempSelectedFromRecommendation
-        ? _insightData!.selected.zone
-        : _insightData!.selected.zone;
+    // 현재 선택된 장소의 zone
+    final zoneToUse = _insightData!.selected.zone;
     
-    final baseZone = _isCongestionInverted
-        ? zoneToUse.copyWithInvertedCongestion()
-        : zoneToUse;
+    // 디버깅 모드이고 현재 선택된 장소가 검색 매장인 경우에만 혼잡도 업데이트
+    final isBaseSelected = _baseSelectedPlaceWithZone != null && 
+                          _insightData!.selected.place.id == _baseSelectedPlaceWithZone!.place.id;
     
-    // 디버깅 모드이고 선택된 혼잡도가 다르면 업데이트
-    if (_isDebugMode && baseZone.crowdingLevel != _selectedCrowdingLevel) {
-      return baseZone.copyWithCrowdingLevel(_selectedCrowdingLevel);
+    if (_isDebugMode && isBaseSelected && zoneToUse.crowdingLevel != _selectedCrowdingLevel) {
+      return zoneToUse.copyWithCrowdingLevel(_selectedCrowdingLevel);
     }
     
-    return baseZone;
+    return zoneToUse;
   }
 
   /// 혼잡도 반전을 적용한 혼잡 여부 (약간 붐빔 또는 붐빔)
@@ -379,12 +654,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final zone = _displayZone ?? _insightData!.selected.zone;
     final level = zone.crowdingLevel;
     return level == '약간 붐빔' || level == '붐빔';
-  }
-
-  /// 추천 장소 목록 (최대 3개)
-  List<PlaceWithZone> get _recommendedPlaces {
-    if (_insightData == null) return [];
-    return _insightData!.alternatives.take(3).toList();
   }
 
   /// 추천 장소 선택 시 호출
@@ -415,17 +684,29 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _currentSelectedPlace = placeWithZone.place;
     });
     
-    // 추천 시간대도 새로 로드
-    _loadRecommendTimes();
+    // 추천 매장 선택 시: 이미 있는 데이터를 사용하므로 API 호출 없음
+    // TIME 탭의 경우에만 선택된 추천 매장의 시간대 정보가 필요하면 로드
+    // (하지만 사용자가 말하길 이미 필요한 정보는 다 있다고 함)
+    // 따라서 API 호출 없이 기존 데이터만 사용
   }
   
+  /// 활성 탭의 데이터 재로드
+  void _reloadActiveTabData() {
+    if (_selectedTab == 'time') {
+      _loadRecommendTimes();
+    } else if (_selectedTab == 'place') {
+      // 반경 모드 초기화하지 않고 현재 모드 유지
+      _loadInsight();
+    }
+  }
+
   /// 추천 시간대 데이터 로드
   Future<void> _loadRecommendTimes() async {
     if (_currentSelectedPlace == null) return;
     
     setState(() {
-      _isLoadingRecommendTimes = true;
-      _recommendTimesError = null;
+      _timeTabState = TimeTabState.loading;
+      _timeTabError = null;
     });
     
     try {
@@ -434,17 +715,22 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       if (mounted) {
         switch (result) {
           case ApiSuccess<RecommendTimesResponse>():
+            final recommendations = result.data.recommendations;
+            // 모든 recommendations의 windows를 평탄화하여 확인
+            final hasAnyWindows = recommendations.any((rec) => rec.windows.isNotEmpty);
             setState(() {
               _recommendTimesData = result.data;
-              _isLoadingRecommendTimes = false;
+              if (!hasAnyWindows) {
+                _timeTabState = TimeTabState.empty;
+              } else {
+                _timeTabState = TimeTabState.success;
+              }
             });
           case ApiFailure<RecommendTimesResponse>():
             debugPrint('[ResultMapScreen] 추천 시간대 로드 실패: ${result.message}');
             setState(() {
-              _isLoadingRecommendTimes = false;
-              _recommendTimesError = result.message;
-              // 에러 발생 시 하드코딩된 데이터 사용
-              _loadHardcodedRecommendTimes();
+              _timeTabState = TimeTabState.error;
+              _timeTabError = result.message;
             });
         }
       }
@@ -453,47 +739,14 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
       if (mounted) {
         setState(() {
-          _isLoadingRecommendTimes = false;
-          _recommendTimesError = e.toString();
-          // 예외 발생 시 하드코딩된 데이터 사용
-          _loadHardcodedRecommendTimes();
+          _timeTabState = TimeTabState.error;
+          _timeTabError = e.toString();
         });
       }
     }
   }
 
 
-  /// 추천 장소 탭 핸들러: 선택 매장만 변경 (검색 매장과 추천 매장은 유지)
-  void _handleRecommendedPlaceTap(PlaceWithZone placeWithZone) {
-    if (_insightData == null) return;
-    
-    // base 스냅샷이 없으면 현재 상태를 base로 저장
-    if (_baseSelectedPlaceWithZone == null) {
-      _baseSelectedPlaceWithZone = _insightData!.selected;
-      _baseRecommendations = List.from(_insightData!.alternatives);
-    }
-    
-    setState(() {
-      // 임시 선택된 장소로 변경
-      _tempSelectedPlaceWithZone = placeWithZone;
-      _viewState = ViewState.tempSelectedFromRecommendation;
-      
-      // 현재 선택된 장소를 임시 선택된 장소로 업데이트
-      // 다른 추천 매장들은 유지 (현재 선택된 매장 제외)
-      final otherRecommendations = _baseRecommendations
-          .where((rec) => rec.place.id != placeWithZone.place.id)
-          .toList();
-      
-      _insightData = PlacesInsightResponse(
-        selected: placeWithZone,
-        alternatives: otherRecommendations, // 다른 추천 매장들 유지
-      );
-      _currentSelectedPlace = placeWithZone.place;
-    });
-    
-    // 추천 시간대도 새로 로드
-    _loadRecommendTimes();
-  }
 
   /// 리턴 아이콘 탭 핸들러: 원래 선택 상태로 복원
   void _handleReturnToBase() {
@@ -512,8 +765,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _currentSelectedPlace = _baseSelectedPlaceWithZone!.place;
     });
     
-    // 추천 시간대도 원래 매장 기준으로 다시 로드
-    _loadRecommendTimes();
+    // 원래 선택으로 복원 시 활성 탭의 데이터 재로드
+    _reloadActiveTabData();
   }
 
   @override
@@ -566,13 +819,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     }
     
     // 추천 매장 마커 표시 조건:
-    // 검색 매장이 혼잡할 때만 표시 (여유/보통일 때는 표시 안 함)
-    // 장소 바꾸기 탭을 선택했어도 검색 매장이 혼잡할 때만 표시
+    // 1. 검색 매장이 혼잡할 때 (약간 붐빔, 붐빔)
+    // 2. 장소 바꾸기 탭이 선택되었을 때
+    // 두 조건을 모두 만족해야 마커 표시
     final baseZone = _baseSelectedPlaceWithZone?.zone;
     final baseIsCongested = baseZone != null && 
                            (baseZone.crowdingLevel == '약간 붐빔' || baseZone.crowdingLevel == '붐빔');
+    final isPlaceTabSelected = _selectedTab == 'place';
     
-    final recommendedPlaces = (baseIsCongested && allOtherPlaces.isNotEmpty) 
+    final recommendedPlaces = (baseIsCongested && isPlaceTabSelected && allOtherPlaces.isNotEmpty) 
         ? allOtherPlaces.take(3).toList() 
         : null;
     
@@ -598,13 +853,44 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           children: [
             // 지도는 전체 화면에 표시
             // API 응답이 있으면 zoneInfo 전달 (없으면 null로 회색 마커 표시)
-            MapView(
-              selectedPlace: selectedPlace,
-              zoneInfo: (!_isLoading) ? _displayZone : null,
-              recommendedPlaces: recommendedPlaces,
-            ),
+            if (!_isLoading)
+              MapView(
+                selectedPlace: selectedPlace,
+                zoneInfo: _displayZone,
+                recommendedPlaces: recommendedPlaces,
+                topCardHeight: 100.0, // 상단 카드 높이 (대략 100px)
+                bottomCardHeight: _isBottomSheetExpanded 
+                    ? MediaQuery.of(context).size.height * 0.6 // 펼친 상태: 화면 높이의 60%
+                    : 150.0, // 접힌 상태: 선택 매장 정보 + 상태 문구 (대략 150px)
+              )
+            else
+              // 지도 로딩 중: 흰 화면 + 돋보기 아이콘 + 문구
+              Container(
+                color: Colors.white,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.explore,
+                        size: 64,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        '지도를 불러오고 있어요',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             // 3초 이상 로딩 중일 때 원형 프로그레스바 표시
-            if (_showLongLoadingIndicator)
+            if (_showLongLoadingIndicator && !_isLoading)
               Stack(
                 children: [
                   // 약간 어두운 배경
@@ -733,7 +1019,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }
 
 
-  /// 상단 고정 앵커: 브랜드 아이콘, (장소명) 기준, 다시 검색 버튼
+  /// 상단 고정 앵커: 브랜드 아이콘, [기준] 라벨 + 장소명, 다시 검색 버튼
   Widget _buildTopSection(Place selectedPlace) {
     final placeName = selectedPlace.name;
 
@@ -755,17 +1041,41 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           // Left: 브랜드 아이콘 (원형, #FFD700 배경)
           _buildBrandIconWithBg(placeName, size: 40),
           const SizedBox(width: _DesignTokens.spacing12),
-          // Center: (장소명) 기준 텍스트
+          // Center: [기준] 라벨 (위) + 장소명 (아래)
           Expanded(
-            child: Text(
-              '$placeName 기준',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: _DesignTokens.black,
-              ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // [기준] 라벨
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _DesignTokens.grayBg,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Text(
+                    '기준',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _DesignTokens.grayText,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                // 장소명
+                Text(
+                  placeName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: _DesignTokens.black,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ],
             ),
           ),
           // Right: 다시 검색 버튼
@@ -847,10 +1157,16 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
   /// 통일된 바텀시트: 매장 정보, 상태 메시지, 가이던스, 선택적 추천 리스트
   Widget _buildUnifiedBottomSheet(PlaceWithZone placeWithZone, ZoneInfo zone) {
-    // 추천 매장 목록 (혼잡할 때만 표시)
-    final recommendedPlaces = (_isCongested && _insightData != null)
+    // 추천 매장 목록: 검색 매장이 혼잡하고 장소 바꾸기 탭 선택 시에만 표시
+    final baseZone = _baseSelectedPlaceWithZone?.zone;
+    final baseIsCongested = baseZone != null && 
+                           (baseZone.crowdingLevel == '약간 붐빔' || baseZone.crowdingLevel == '붐빔');
+    final isPlaceTabSelected = _selectedTab == 'place';
+    
+    final recommendedPlaces = (baseIsCongested && isPlaceTabSelected && _insightData != null)
         ? _insightData!.alternatives.take(3).toList()
         : <PlaceWithZone>[];
+    
     final isCrowded = zone.crowdingLevel == '약간 붐빔' || zone.crowdingLevel == '붐빔';
     final showReturnIcon = _viewState == ViewState.tempSelectedFromRecommendation;
 
@@ -877,26 +1193,41 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               ),
             ],
             
-            // Section 1: Header - 원형 아이콘 48px, storeName, badge
-            _buildBottomSheetHeader(placeWithZone.place, zone),
+            // Section 1: Header - 원형 아이콘 48px, storeName, badge + 접기/펼치기 버튼
+            Row(
+              children: [
+                Expanded(
+                  child: _buildBottomSheetHeader(placeWithZone.place, zone),
+                ),
+                // 접기/펼치기 버튼
+                IconButton(
+                  icon: Icon(
+                    _isBottomSheetExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: _DesignTokens.grayText,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _isBottomSheetExpanded = !_isBottomSheetExpanded;
+                    });
+                  },
+                ),
+              ],
+            ),
             
-            // Section 2: Status text - "지금은 {혼잡도} 편이에요"
+            // Section 2: Status text - "지금은 {혼잡도} 편이에요" (항상 표시)
             Padding(
               padding: const EdgeInsets.only(top: _DesignTokens.spacing16),
               child: _buildStatusText(zone.crowdingLevel),
             ),
             
-            // Section 3: Segmented control tabs (혼잡할 때만 표시)
-            if (isCrowded) ...[
+            // 펼친 상태일 때만 탭과 탭 콘텐츠 표시
+            if (_isBottomSheetExpanded && isCrowded) ...[
+              // Section 3: Segmented control tabs (혼잡할 때만 표시)
               Padding(
                 padding: const EdgeInsets.only(top: _DesignTokens.spacing16),
                 child: _buildSegmentedControl(
                   selectedTab: _selectedTab,
-                  onTabChanged: (tab) {
-                    setState(() {
-                      _selectedTab = tab;
-                    });
-                  },
+                  onTabChanged: _onTabChanged,
                 ),
               ),
               
@@ -1071,16 +1402,31 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     if (selectedTab == 'time') {
       return _buildTimeTabContent(zone);
     } else {
-      return _buildPlaceTabContent(zone, recommendedPlaces);
+      // PLACE 탭: 상태에 따라 recommendedPlaces 사용 여부 결정
+      final placesToShow = _placeTabState == PlaceTabState.success ? recommendedPlaces : <PlaceWithZone>[];
+      return _buildPlaceTabContent(zone, placesToShow);
     }
   }
   
   /// Time tab content
   Widget _buildTimeTabContent(ZoneInfo zone) {
+    switch (_timeTabState) {
+      case TimeTabState.loading:
+        return _buildTimeTabLoading();
+      case TimeTabState.success:
+        return _buildTimeTabSuccess();
+      case TimeTabState.empty:
+        return _buildTimeTabEmpty();
+      case TimeTabState.error:
+        return _buildTimeTabError();
+    }
+  }
+  
+  /// TIME 탭 로딩 상태
+  Widget _buildTimeTabLoading() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header
         const Text(
           '이때 오면 여유로워요',
           style: TextStyle(
@@ -1090,55 +1436,117 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           ),
         ),
         const SizedBox(height: _DesignTokens.spacing16),
-        
-        // Time list
-        if (_isLoadingRecommendTimes)
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.all(_DesignTokens.spacing24),
-              child: CircularProgressIndicator(),
-            ),
-          )
-        else if (_recommendTimesError != null)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(_DesignTokens.spacing24),
-              child: Text(
-                '추천 시간대를 불러올 수 없습니다',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: _DesignTokens.grayText,
+        // 스켈레톤 (3개)
+        ...List.generate(3, (index) => Padding(
+          padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 60,
+                child: Container(
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
               ),
-            ),
-          )
-        else if (_recommendTimesData == null || _recommendTimesData!.recommendations.isEmpty)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(_DesignTokens.spacing24),
-              child: Text(
-                '추천 시간대 정보가 없습니다',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: _DesignTokens.grayText,
+              const SizedBox(width: _DesignTokens.spacing12),
+              Expanded(
+                child: Container(
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
               ),
-            ),
-          )
-        else
-          ..._buildTimeList(),
-        
-        // Footer
-        if (_recommendTimesData != null && _recommendTimesData!.recommendations.isNotEmpty) ...[
-          const SizedBox(height: _DesignTokens.spacing16),
-          const Text(
-            '요즘 이 시간대가 쾌적해요',
-            style: TextStyle(
-              fontSize: 13,
-              color: _DesignTokens.grayText,
-            ),
+              const SizedBox(width: _DesignTokens.spacing12),
+              SizedBox(
+                width: 80,
+                child: Container(
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        )),
+      ],
+    );
+  }
+  
+  /// TIME 탭 성공 상태
+  Widget _buildTimeTabSuccess() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '이때 오면 여유로워요',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing16),
+        ..._buildTimeList(),
+        const SizedBox(height: _DesignTokens.spacing16),
+        const Text(
+          '요즘 이 시간대가 쾌적해요',
+          style: TextStyle(
+            fontSize: 13,
+            color: _DesignTokens.grayText,
+          ),
+        ),
+      ],
+    );
+  }
+  
+  /// TIME 탭 빈 상태
+  Widget _buildTimeTabEmpty() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '이때 오면 여유로워요',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing24),
+        _buildEmptyState(
+          title: '아직 이 장소의 시간대 정보가 부족해요',
+          body: '조금만 기다려주시면 더 정확한 정보를 알려드릴게요',
+        ),
+      ],
+    );
+  }
+  
+  /// TIME 탭 에러 상태
+  Widget _buildTimeTabError() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '이때 오면 여유로워요',
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing24),
+        _buildErrorState(
+          title: '시간 정보를 불러오지 못했어요',
+          body: '잠시 후 다시 시도해 주세요',
+          onRetry: _retryTime,
+        ),
       ],
     );
   }
@@ -1267,15 +1675,34 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   
   /// Place tab content
   Widget _buildPlaceTabContent(ZoneInfo zone, List<PlaceWithZone> recommendedPlaces) {
-    final isCrowded = zone.crowdingLevel == '약간 붐빔' || zone.crowdingLevel == '붐빔';
-    final headerText = (isCrowded || zone.crowdingLevel == '보통')
-        ? '근처에 여유로운 곳이 있어요'
-        : '지금 바로 갈 수 있어요';
+    switch (_placeTabState) {
+      case PlaceTabState.loading:
+        return _buildPlaceTabLoading(zone);
+      case PlaceTabState.success:
+        return _buildPlaceTabSuccess(zone, recommendedPlaces);
+      case PlaceTabState.emptyFirst:
+        return _buildPlaceTabEmptyFirst(zone);
+      case PlaceTabState.emptyExpanded:
+        return _buildPlaceTabEmptyExpanded(zone);
+      case PlaceTabState.error:
+        return _buildPlaceTabError(zone);
+    }
+  }
+  
+  /// PLACE 탭 헤더 텍스트 결정
+  String _getPlaceTabHeaderText(ZoneInfo zone) {
+    return zone.crowdingLevel == '붐빔'
+        ? '지금 이용하기 좋은 곳이 있어요'
+        : '근처에 여유로운 곳이 있어요';
+  }
+  
+  /// PLACE 탭 로딩 상태
+  Widget _buildPlaceTabLoading(ZoneInfo zone) {
+    final headerText = _getPlaceTabHeaderText(zone);
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Header
         Text(
           headerText,
           style: const TextStyle(
@@ -1285,28 +1712,235 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           ),
         ),
         const SizedBox(height: _DesignTokens.spacing16),
-        
-        // Place list
-        if (recommendedPlaces.isEmpty)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(_DesignTokens.spacing24),
-              child: Text(
-                '근처에 여유로운 곳이 없어요',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: _DesignTokens.grayText,
+        // 스켈레톤 (3개)
+        ...List.generate(3, (index) => Padding(
+          padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
+              const SizedBox(width: _DesignTokens.spacing12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      height: 16,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      height: 14,
+                      width: 120,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: _DesignTokens.spacing12),
+              Icon(Icons.chevron_right, color: Colors.grey[400], size: 24),
+            ],
+          ),
+        )),
+      ],
+    );
+  }
+  
+  /// PLACE 탭 성공 상태
+  Widget _buildPlaceTabSuccess(ZoneInfo zone, List<PlaceWithZone> recommendedPlaces) {
+    final headerText = _getPlaceTabHeaderText(zone);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          headerText,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing16),
+        ...recommendedPlaces.map((placeWithZone) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
+            child: _buildPlaceCard(placeWithZone),
+          );
+        }).toList(),
+      ],
+    );
+  }
+  
+  /// PLACE 탭 첫 번째 빈 상태 (기본 반경)
+  Widget _buildPlaceTabEmptyFirst(ZoneInfo zone) {
+    final headerText = _getPlaceTabHeaderText(zone);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          headerText,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing24),
+        _buildEmptyState(
+          title: '가까운 범위에는 여유로운 곳이 없어요',
+          body: '조금 더 넓게 찾아볼까요?',
+          actionButton: ElevatedButton(
+            onPressed: _expandRadiusAndRefetch,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _DesignTokens.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
-          )
-        else
-          ...recommendedPlaces.map((placeWithZone) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
-              child: _buildPlaceCard(placeWithZone),
-            );
-          }).toList(),
+            child: const Text('범위 넓혀서 찾기'),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  /// PLACE 탭 확장 후 빈 상태
+  Widget _buildPlaceTabEmptyExpanded(ZoneInfo zone) {
+    final headerText = _getPlaceTabHeaderText(zone);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          headerText,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing24),
+        _buildEmptyState(
+          title: '지금은 주변 대부분이 붐비는 상태예요',
+          body: "'시간 바꾸기'에서 한산한 시간대를 확인해보세요",
+        ),
+      ],
+    );
+  }
+  
+  /// PLACE 탭 에러 상태
+  Widget _buildPlaceTabError(ZoneInfo zone) {
+    final headerText = _getPlaceTabHeaderText(zone);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          headerText,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: _DesignTokens.spacing24),
+        _buildErrorState(
+          title: '근처 장소 정보를 불러오지 못했어요',
+          body: '잠시 후 다시 시도해 주세요',
+          onRetry: _retryPlace,
+        ),
+      ],
+    );
+  }
+  
+  /// 빈 상태 공통 UI
+  Widget _buildEmptyState({
+    required String title,
+    required String body,
+    Widget? actionButton,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          body,
+          style: const TextStyle(
+            fontSize: 14,
+            color: _DesignTokens.grayText,
+          ),
+        ),
+        if (actionButton != null) ...[
+          const SizedBox(height: 16),
+          actionButton,
+        ],
+      ],
+    );
+  }
+  
+  /// 에러 상태 공통 UI
+  Widget _buildErrorState({
+    required String title,
+    required String body,
+    required VoidCallback onRetry,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: _DesignTokens.black,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          body,
+          style: const TextStyle(
+            fontSize: 14,
+            color: _DesignTokens.grayText,
+          ),
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          onPressed: onRetry,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _DesignTokens.primary,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: const Text('다시 시도'),
+        ),
       ],
     );
   }
@@ -1416,495 +2050,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 color: Colors.black87,
                 fontWeight: FontWeight.w500,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-
-
-  /// 하드코딩된 추천 시간대 데이터 로드
-  void _loadHardcodedRecommendTimes() {
-    // 백엔드 API 응답 구조와 동일한 하드코딩 데이터
-    _recommendTimesData = RecommendTimesResponse(
-      placeId: _currentSelectedPlace?.id ?? 'hardcoded_place',
-      tz: 'Asia/Seoul',
-      days: 7,
-      minSamples: 3,
-      perDay: 3,
-      windowH: 2,
-      includeLowSamples: false,
-      fallbackToHourly: false,
-      totalSamples: 50,
-      recommendations: [
-        // 월요일
-        DayRecommendation(
-          dow: 0,
-          dowName: '월',
-          windows: [
-            TimeWindow(
-              dow: 0,
-              dowName: '월',
-              startHour: 14,
-              endHour: 16,
-              label: '14:00-16:00',
-              avgRank: 3.5,
-              n: 8,
-              hours: [14, 15],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'high',
-              reason: '최근 일주일 동안 월요일 기준 14:00-16:00은 평소보다 덜 붐비는 편이에요, 최근 일주일은 이 시간대가 더 한산한 흐름이었어요.',
-            ),
-            TimeWindow(
-              dow: 0,
-              dowName: '월',
-              startHour: 10,
-              endHour: 12,
-              label: '10:00-12:00',
-              avgRank: 3.2,
-              n: 6,
-              hours: [10, 11],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'medium',
-              reason: '최근 일주일 동안 월요일 기준 10:00-12:00은 평소보다 덜 붐비는 편이에요, 최근 일주일 흐름도 크게 다르지 않았어요.',
-            ),
-          ],
-        ),
-        // 화요일
-        DayRecommendation(
-          dow: 1,
-          dowName: '화',
-          windows: [
-            TimeWindow(
-              dow: 1,
-              dowName: '화',
-              startHour: 15,
-              endHour: 17,
-              label: '15:00-17:00',
-              avgRank: 3.6,
-              n: 9,
-              hours: [15, 16],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'high',
-              reason: '최근 일주일 동안 화요일 기준 15:00-17:00은 평소보다 확실히 한산한 편이에요, 최근 일주일은 이 시간대가 더 한산한 흐름이었어요.',
-            ),
-            TimeWindow(
-              dow: 1,
-              dowName: '화',
-              startHour: 11,
-              endHour: 13,
-              label: '11:00-13:00',
-              avgRank: 3.3,
-              n: 7,
-              hours: [11, 12],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'medium',
-              reason: '최근 일주일 동안 화요일 기준 11:00-13:00은 평소보다 덜 붐비는 편이에요, 최근 일주일 흐름도 크게 다르지 않았어요.',
-            ),
-          ],
-        ),
-        // 수요일
-        DayRecommendation(
-          dow: 2,
-          dowName: '수',
-          windows: [
-            TimeWindow(
-              dow: 2,
-              dowName: '수',
-              startHour: 14,
-              endHour: 16,
-              label: '14:00-16:00',
-              avgRank: 3.4,
-              n: 8,
-              hours: [14, 15],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'high',
-              reason: '최근 일주일 동안 수요일 기준 14:00-16:00은 평소보다 덜 붐비는 편이에요, 최근 일주일은 이 시간대가 더 한산한 흐름이었어요.',
-            ),
-          ],
-        ),
-        // 목요일
-        DayRecommendation(
-          dow: 3,
-          dowName: '목',
-          windows: [
-            TimeWindow(
-              dow: 3,
-              dowName: '목',
-              startHour: 15,
-              endHour: 17,
-              label: '15:00-17:00',
-              avgRank: 3.5,
-              n: 8,
-              hours: [15, 16],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'high',
-              reason: '최근 일주일 동안 목요일 기준 15:00-17:00은 평소보다 덜 붐비는 편이에요, 최근 일주일은 이 시간대가 더 한산한 흐름이었어요.',
-            ),
-          ],
-        ),
-        // 금요일
-        DayRecommendation(
-          dow: 4,
-          dowName: '금',
-          windows: [
-            TimeWindow(
-              dow: 4,
-              dowName: '금',
-              startHour: 10,
-              endHour: 12,
-              label: '10:00-12:00',
-              avgRank: 3.1,
-              n: 5,
-              hours: [10, 11],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'medium',
-              reason: '최근 일주일 동안 금요일 기준 10:00-12:00은 평소보다 덜 붐비는 편이에요, 최근 일주일 흐름도 크게 다르지 않았어요.',
-            ),
-          ],
-        ),
-        // 토요일
-        DayRecommendation(
-          dow: 5,
-          dowName: '토',
-          windows: [
-            TimeWindow(
-              dow: 5,
-              dowName: '토',
-              startHour: 9,
-              endHour: 11,
-              label: '09:00-11:00',
-              avgRank: 3.0,
-              n: 4,
-              hours: [9, 10],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'low',
-              reason: '최근 일주일 동안 토요일 기준 09:00-11:00은 평소보다 덜 붐비는 편이에요, 최근 일주일 흐름도 크게 다르지 않았어요. 다만 데이터가 아직 적어 참고용이에요',
-            ),
-          ],
-        ),
-        // 일요일
-        DayRecommendation(
-          dow: 6,
-          dowName: '일',
-          windows: [
-            TimeWindow(
-              dow: 6,
-              dowName: '일',
-              startHour: 9,
-              endHour: 11,
-              label: '09:00-11:00',
-              avgRank: 3.2,
-              n: 5,
-              hours: [9, 10],
-              modeLevel: '여유',
-              fallback: false,
-              confidence: 'medium',
-              reason: '최근 일주일 동안 일요일 기준 09:00-11:00은 평소보다 덜 붐비는 편이에요, 최근 일주일 흐름도 크게 다르지 않았어요.',
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  /// Best-time 아코디언 (약간 붐빔, 붐빔일 때만 표시)
-  Widget _buildBestTimeLink() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: Colors.grey[200]!,
-          width: 1,
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 아코디언 헤더 (항상 표시)
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isBestTimeExpanded = !_isBestTimeExpanded;
-              });
-            },
-            borderRadius: BorderRadius.vertical(
-              top: const Radius.circular(12),
-              bottom: Radius.circular(_isBestTimeExpanded ? 0 : 12),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '이 매장, 덜 붐비는 시간 보기',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.blue,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    _isBestTimeExpanded
-                        ? Icons.expand_less
-                        : Icons.expand_more,
-                    color: Colors.blue,
-                    size: 20,
-                  ),
-                ],
-              ),
-            ),
-          ),
-          // 아코디언 내용 (확장 시 표시)
-          if (_isBestTimeExpanded && _recommendTimesData != null)
-            _buildBestTimeContent(),
-        ],
-      ),
-    );
-  }
-
-  /// 추천 시간대 내용 위젯
-  Widget _buildBestTimeContent() {
-    if (_recommendTimesData == null) return const SizedBox.shrink();
-
-    final recommendations = _recommendTimesData!.recommendations
-        .where((rec) => rec.windows.isNotEmpty)
-        .toList();
-
-    if (recommendations.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Text(
-          '추천 시간대 정보가 없습니다.',
-          style: TextStyle(
-            fontSize: 14,
-            color: Colors.grey[600],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(
-            color: Colors.grey[200]!,
-            width: 1,
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // 요일별 추천 시간대
-          ...recommendations.map((dayRec) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // 요일 헤더
-                  Text(
-                    '${dayRec.dowName}요일',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // 시간대 목록
-                  ...dayRec.windows.map((window) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildTimeWindowCard(window),
-                    );
-                  }).toList(),
-                ],
-              ),
-            );
-          }).toList(),
-        ],
-      ),
-    );
-  }
-
-  /// 시간대 카드 위젯
-  Widget _buildTimeWindowCard(TimeWindow window) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Colors.grey[200]!,
-          width: 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 시간대와 혼잡도 레벨
-          Row(
-            children: [
-              Text(
-                window.label,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                decoration: BoxDecoration(
-                  color: _getCrowdingColor(window.modeLevel).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  window.modeLevel.isNotEmpty ? window.modeLevel : '여유',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: _getCrowdingColor(window.modeLevel),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          // 설명 문구
-          if (window.reason != null) ...[
-            const SizedBox(height: 6),
-            Text(
-              window.reason!,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[700],
-                height: 1.4,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-
-  /// 혼잡도별 상태 메시지 반환
-  List<String> _getStatusMessages(String crowdingLevel) {
-    switch (crowdingLevel) {
-      case '여유':
-      case '원활':
-        return ['지금은 여유 있어요', '지금 방문해도 괜찮아요'];
-      case '보통':
-        return ['지금은 사람이 조금 있는 편이에요', '이용하기에 큰 무리는 없어요'];
-      case '약간 붐빔':
-        return ['지금은 약간 붐비는 편이에요', '조금 덜 붐비는 곳도 함께 볼 수 있어요'];
-      case '붐빔':
-        return ['지금은 붐비고 있어요', '조금 덜 붐비는 곳도 함께 볼 수 있어요'];
-      default:
-        return ['혼잡도 정보를 확인하세요'];
-    }
-  }
-
-
-  /// 추천 장소 리스트 아이템: 브랜드 아이콘, 장소명, 혼잡도 배지, 거리, chevron
-  Widget _buildRecommendedPlaceCard(PlaceWithZone placeWithZone) {
-    final place = placeWithZone.place;
-    final zone = placeWithZone.zone;
-
-    return InkWell(
-      onTap: () => _handleRecommendedPlaceTap(placeWithZone),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.grey[50],
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.grey[200]!,
-            width: 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            // 브랜드 아이콘
-            _buildBrandIcon(place.name, size: 40),
-            const SizedBox(width: 12),
-            // 장소 정보
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // 장소명 (max 1 line, ellipsis)
-                  Text(
-                    place.name,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 6),
-                  // 혼잡도 배지와 거리
-                  Row(
-                    children: [
-                      // 혼잡도 배지
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _getCrowdingColor(zone.crowdingLevel).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: _getCrowdingColor(zone.crowdingLevel),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      // 거리
-                      if (place.distanceM > 0)
-                        Text(
-                          '${place.distanceM.toStringAsFixed(0)}m',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Chevron
-            const Icon(
-              Icons.chevron_right,
-              color: Colors.grey,
-              size: 24,
             ),
           ],
         ),

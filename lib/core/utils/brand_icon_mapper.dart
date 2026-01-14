@@ -10,7 +10,11 @@ class BrandIconMapper {
     }
 
     // 브랜드명 정규화 (공백 제거)
-    final normalizedName = brandName.trim();
+    var normalizedName = brandName.trim();
+    
+    // 메가MGC, 메가MGC커피를 메가커피로 변환
+    normalizedName = normalizedName.replaceAll('메가MGC', '메가커피');
+    normalizedName = normalizedName.replaceAll('메가MGC커피', '메가커피');
 
     // 브랜드명 → 에셋 경로 매핑
     // 예: "스타벅스 강남점" → "스타벅스"로 매핑
