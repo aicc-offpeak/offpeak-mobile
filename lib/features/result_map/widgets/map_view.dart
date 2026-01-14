@@ -46,10 +46,11 @@ class _MapViewState extends State<MapView> {
 
   static const _zoomLevel = 16;
   
-  // 마커 이미지 크기 (가로 2: 세로 3 비율, 원본 크기의 1/3)
-  // 2:3 비율: 28x42 (원본 84x126의 1/3)
-  static const double _markerWidth = 28.0;   // 2:3 비율의 가로
-  static const double _markerHeight = 42.0;  // 2:3 비율의 세로
+  // 마커 이미지 크기 (가로 2: 세로 3 비율)
+  // 기본 크기를 선택 매장 기준으로 설정 (기존 기본의 75%)
+  // 2:3 비율: 21x32 (기존 28x42의 75%, 21 * 1.5 = 31.5 → 32로 반올림)
+  static const double _markerWidth = 21.0;   // 2:3 비율의 가로 (기본 크기)
+  static const double _markerHeight = 32.0;  // 2:3 비율의 세로 (기본 크기)
   
   // 사용자 위치 마커 크기 (원래 크기의 1/3)
   static const int _userLocationMarkerSize = 13;
@@ -262,12 +263,12 @@ class _MapViewState extends State<MapView> {
         });
         _moveCameraToMarker();
       }
-      // 비동기 함수이므로 에러 처리 추가
-      _updateSelectedPlacePoi().catchError((e) {
+      // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
+      _updateRecommendedPlacesPoi().then((_) {
+        // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가
+        return _updateSelectedPlacePoi();
+      }).catchError((e) {
         debugPrint('[MapView] POI 업데이트 에러 (didUpdateWidget): $e');
-      });
-      _updateRecommendedPlacesPoi().catchError((e) {
-        debugPrint('[MapView] 추천 장소 POI 업데이트 에러 (didUpdateWidget): $e');
       });
     }
     // 사용자 위치는 스트림으로 처리하므로 didUpdateWidget에서는 처리하지 않음
@@ -320,19 +321,19 @@ class _MapViewState extends State<MapView> {
 
         // 지도 준비 완료 후 카메라 이동 및 POI 추가
         _moveCameraToMarker();
-        debugPrint('[MapView] _updateSelectedPlacePoi 호출 전');
-        // 비동기 함수이므로 에러 처리 추가
-        _updateSelectedPlacePoi().catchError((e) {
+        debugPrint('[MapView] POI 추가 시작');
+        // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
+        _updateRecommendedPlacesPoi().then((_) {
+          // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가
+          return _updateSelectedPlacePoi();
+        }).catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
-        });
-        _updateRecommendedPlacesPoi().catchError((e) {
-          debugPrint('[MapView] 추천 장소 POI 업데이트 에러: $e');
         });
         // 지도 준비 완료 후 현재 위치를 가져와서 POI 추가
         _loadInitialUserLocation().catchError((e) {
           debugPrint('[MapView] 초기 사용자 위치 로드 에러: $e');
         });
-        debugPrint('[MapView] _updateSelectedPlacePoi 호출 후');
+        debugPrint('[MapView] POI 추가 순서 보장 완료');
       },
       onCameraMoveEnd: (cameraPosition, zoomLevel) {
         debugPrint('[MapView] 카메라 이동 완료: $cameraPosition, zoom: $zoomLevel');
@@ -394,7 +395,8 @@ class _MapViewState extends State<MapView> {
         // PoiStyle에 PNG 기반 아이콘 설정
         // 브랜드 아이콘이 있으면 사용, 없으면 혼잡도에 따라 적절한 색상의 마커 이미지 사용
         // 원본 PNG 비율을 유지하여 찌그러짐 방지
-        // 선택 매장이므로 isRecommended: false (기본값)
+        // 선택 매장이므로 isRecommended: false
+        // 기본 크기 사용 (기본 크기가 이미 선택 매장 기준으로 설정됨)
         final markerIcon = await _createMarkerIcon(
           widget.selectedPlace,
           widget.zoneInfo,
@@ -480,15 +482,15 @@ class _MapViewState extends State<MapView> {
         final crowdingLevel = zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유';
         final poiText = '${place.name}\n$crowdingLevel';
 
-        // 추천 장소는 선택 장소보다 작은 마커 사용
         // 추천 장소의 실제 혼잡도에 따라 색상 결정 (API 결과 반영)
         // 추천 장소 마커 사용 (isRecommended: true)
+        // 마커 크기를 선택 매장 마커 크기의 75%로 설정
         final markerIcon = await _createMarkerIcon(
           place,
           zone, // 실제 API 결과의 zoneInfo 전달
           isRecommended: true,
-          widthMultiplier: 0.8,
-          heightMultiplier: 0.8,
+          widthMultiplier: 0.75, // 선택 매장 크기의 75%
+          heightMultiplier: 0.75,
         );
 
         final poiStyle = PoiStyle(

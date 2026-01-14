@@ -285,13 +285,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     return baseZone;
   }
 
-  /// 혼잡도 반전을 적용한 혼잡 여부
+  /// 혼잡도 반전을 적용한 혼잡 여부 (약간 붐빔 또는 붐빔)
   bool get _isCongested {
     if (_insightData == null) return false;
-    final zone = _isCongestionInverted
-        ? _insightData!.selected.zone.copyWithInvertedCongestion()
-        : _insightData!.selected.zone;
-    return zone.isCongested;
+    final zone = _displayZone ?? _insightData!.selected.zone;
+    final level = zone.crowdingLevel;
+    return level == '약간 붐빔' || level == '붐빔';
   }
 
   /// 추천 장소 목록 (최대 3개)
@@ -350,7 +349,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             MapView(
               selectedPlace: selectedPlace,
               zoneInfo: (!_isLoading) ? _displayZone : null,
-              recommendedPlaces: (_insightData != null && _isCongested) ? _recommendedPlaces : null,
+              recommendedPlaces: (_insightData != null && _isCongested && _recommendedPlaces.isNotEmpty) 
+                  ? _recommendedPlaces.take(3).toList() 
+                  : null,
             ),
             // 상단 섹션: 항상 표시
             if (selectedPlace != null)
@@ -441,7 +442,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }
 
 
-  /// 상단 섹션: "(장소명) 기준" 중앙, "다시 선택" 우측
+  /// 상단 고정 앵커: 브랜드 아이콘, (장소명) 기준, 다시 선택 버튼
   Widget _buildTopSection(Place selectedPlace) {
     final placeName = selectedPlace.name;
 
@@ -457,171 +458,42 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              // 브랜드 아이콘
-              _buildBrandIcon(placeName, size: 40),
-              const SizedBox(width: 12),
-              // "(장소명) 기준" 텍스트
-              Expanded(
-                child: Text(
-                  '$placeName 기준',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
+          // 브랜드 아이콘
+          _buildBrandIcon(placeName, size: 40),
+          const SizedBox(width: 12),
+          // (장소명) 기준 텍스트
+          Expanded(
+            child: Text(
+              '$placeName 기준',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
               ),
-              // 우측에 "다시 선택" 버튼
-              TextButton(
-                onPressed: () {
-                  Navigator.pushReplacementNamed(context, Routes.search);
-                },
-                child: const Text(
-                  '다시 선택',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.blue,
-                  ),
-                ),
-              ),
-            ],
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
           ),
-          // 조건부: "이 장소, 덜 붐비는 시간 보기 >" 버튼 (혼잡 시에만)
-          if (_insightData != null && _isCongested)
-            Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: TextButton(
-                onPressed: () {
-                  // TODO: 덜 붐비는 시간 보기 기능 구현
-                },
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 0,
-                    vertical: 4,
-                  ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text(
-                  '이 장소, 덜 붐비는 시간 보기 >',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.blue,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+          // 우측에 "다시 선택" 버튼
+          TextButton(
+            onPressed: () {
+              Navigator.pushReplacementNamed(context, Routes.search);
+            },
+            child: const Text(
+              '다시 선택',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.blue,
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  /// 여유 상태 하단 패널
-  Widget _buildSmoothStateSheet() {
-    if (_currentPlaceWithZone == null) return const SizedBox.shrink();
-    final place = _currentPlaceWithZone!.place;
-    final zone = _displayZone!;
-
-    return Container(
-      padding: const EdgeInsets.all(20.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              // 브랜드 아이콘
-              _buildBrandIcon(place.name, size: 40),
-              const SizedBox(width: 12),
-              // "(장소명) 기준" 텍스트
-              Expanded(
-                child: Text(
-                  '${place.name} 기준',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ),
-              // 우측에 "다시 선택" 버튼
-              TextButton(
-                onPressed: () {
-                  Navigator.pushReplacementNamed(context, Routes.search);
-                },
-                child: const Text(
-                  '다시 선택',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.blue,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          // 조건부: "이 장소, 덜 붐비는 시간 보기 >" 버튼 (혼잡 시에만)
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, -0.1),
-                    end: Offset.zero,
-                  ).animate(CurvedAnimation(
-                    parent: animation,
-                    curve: Curves.easeOut,
-                  )),
-                  child: child,
-                ),
-              );
-            },
-            child: _isCongested
-                ? Align(
-                    key: const ValueKey('busy-button'),
-                    alignment: Alignment.centerLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 2.7),
-                      child: TextButton(
-                        onPressed: () {
-                          // TODO: 덜 붐비는 시간 보기 기능 구현
-                        },
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 3.6,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: const Text(
-                          '이 장소, 덜 붐비는 시간 보기 >',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.blue,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                : const SizedBox.shrink(key: ValueKey('empty')),
           ),
         ],
       ),
     );
   }
+
 
   /// 하단 바텀시트: 통일된 구조로 모든 혼잡도 상태 표시
   Widget _buildBottomSheet() {
@@ -629,10 +501,17 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
     final placeWithZone = _currentPlaceWithZone!;
     final zone = _displayZone ?? placeWithZone.zone;
+    final isCrowded = zone.crowdingLevel == '약간 붐빔' || zone.crowdingLevel == '붐빔';
+    final recommendedPlaces = _recommendedPlaces;
+    
+    // 높이 계산: 기본 메시지 + (혼잡 시 best-time 링크) + (혼잡 시 추천 리스트)
+    final estimatedHeight = isCrowded && recommendedPlaces.isNotEmpty
+        ? 300.0 + (recommendedPlaces.length * 80.0) // 각 추천 항목당 약 80px
+        : 150.0; // 기본 메시지만
 
     return Container(
       constraints: BoxConstraints(
-        maxHeight: _isCongested ? 500 : 250,
+        maxHeight: estimatedHeight.clamp(150.0, 500.0),
       ),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -652,62 +531,56 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     );
   }
 
-  /// 통일된 바텀시트: 모든 혼잡도 상태에서 동일한 구조 사용
+  /// 통일된 바텀시트: 매장 정보, 상태 메시지, 가이던스, 선택적 추천 리스트
   Widget _buildUnifiedBottomSheet(PlaceWithZone placeWithZone, ZoneInfo zone) {
-    final place = placeWithZone.place;
     final recommendedPlaces = _recommendedPlaces;
     final statusMessages = _getStatusMessages(zone.crowdingLevel);
+    final isCrowded = zone.crowdingLevel == '약간 붐빔' || zone.crowdingLevel == '붐빔';
 
     return SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 선택된 장소 요약 섹션 (항상 표시) - 안내 문구 위로 이동
+          // 1. 선택 매장 인라인 요약 (모든 혼잡도에서 표시)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-            child: _buildSelectedPlaceSummary(place, zone),
+            child: _buildSelectedPlaceInlineSummary(placeWithZone.place, zone),
           ),
-          // 상태 메시지 섹션
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  statusMessages[0],
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                ),
-                if (statusMessages.length > 1) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    statusMessages[1],
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          // 조건부 추천 장소 섹션 (약간 붐빔, 붐빔일 때만)
-          if (_isCongested && recommendedPlaces.isNotEmpty) ...[
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: Divider(),
-            ),
+          
+          // 2. 추천 시간대 버튼 (약간 붐빔, 붐빔일 때만 표시)
+          if (isCrowded) ...[
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: _buildBestTimeLink(),
+            ),
+            const SizedBox(height: 8),
+          ],
+          
+          // 3. 상태 메시지와 가이던스
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+            child: _buildStatusAndGuidance(statusMessages),
+          ),
+          
+          // 4. 선택적 추천 장소 리스트 (약간 붐빔, 붐빔일 때만)
+          if (isCrowded && recommendedPlaces.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Divider(height: 1),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
               child: Column(
-                children: recommendedPlaces.map((recommended) {
-                  return _buildRecommendedPlaceCard(recommended);
-                }).toList(),
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ...recommendedPlaces.map((recommended) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildRecommendedPlaceCard(recommended),
+                    );
+                  }).toList(),
+                ],
               ),
             ),
           ],
@@ -716,6 +589,100 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       ),
     );
   }
+
+  /// 상태 메시지와 가이던스
+  Widget _buildStatusAndGuidance(List<String> statusMessages) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 상태: 혼잡도 레벨에 따른 메인 메시지 (large bold)
+        Text(
+          statusMessages[0],
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        // 가이던스: 혼잡도 레벨에 따른 보조 메시지 (small secondary)
+        if (statusMessages.length > 1) ...[
+          const SizedBox(height: 4),
+          Text(
+            statusMessages[1],
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[700],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 선택 매장 인라인 요약: 브랜드 아이콘, 장소명, 혼잡도 배지 (best-time 링크 위에 표시)
+  Widget _buildSelectedPlaceInlineSummary(Place place, ZoneInfo zone) {
+    return Row(
+      children: [
+        // 브랜드 아이콘 (작은 크기)
+        _buildBrandIcon(place.name, size: 32),
+        const SizedBox(width: 8),
+        // 장소명
+        Expanded(
+          child: Text(
+            place.name,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        // 혼잡도 배지 (작은 크기)
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          decoration: BoxDecoration(
+            color: _getCrowdingColor(zone.crowdingLevel).withOpacity(0.1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
+            style: TextStyle(
+              fontSize: 11,
+              color: _getCrowdingColor(zone.crowdingLevel),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Best-time 링크 (약간 붐빔, 붐빔일 때만 표시)
+  Widget _buildBestTimeLink() {
+    return TextButton(
+      onPressed: () {
+        // TODO: 덜 붐비는 시간 보기 기능 구현
+      },
+      style: TextButton.styleFrom(
+        padding: EdgeInsets.zero,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: const Text(
+        '이 매장, 덜 붐비는 시간 보기',
+        style: TextStyle(
+          fontSize: 14,
+          color: Colors.blue,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
 
   /// 혼잡도별 상태 메시지 반환
   List<String> _getStatusMessages(String crowdingLevel) {
@@ -728,111 +695,48 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       case '약간 붐빔':
         return ['지금은 약간 붐비는 편이에요', '조금 덜 붐비는 곳도 함께 볼 수 있어요'];
       case '붐빔':
-        return ['지금은 붐비고 있어요', '대신 이 근처는 비교적 여유 있어요'];
+        return ['지금은 붐비고 있어요', '조금 덜 붐비는 곳도 함께 볼 수 있어요'];
       default:
         return ['혼잡도 정보를 확인하세요'];
     }
   }
 
-  /// 선택된 장소 요약 (항상 표시)
-  Widget _buildSelectedPlaceSummary(Place place, ZoneInfo zone) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 브랜드 아이콘
-        _buildBrandIcon(place.name, size: 56),
-        const SizedBox(width: 16),
-        // 장소 정보
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 장소명
-              Text(
-                place.name,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 8),
-              // 혼잡도 배지와 거리
-              Row(
-                children: [
-                  // 혼잡도 배지
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _getCrowdingColor(zone.crowdingLevel).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _getCrowdingColor(zone.crowdingLevel),
-                        fontWeight: FontWeight.w600,
-                        height: 1.0, // 줄 간격을 1.0으로 설정하여 세로 중앙 정렬 개선
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  // 거리 정보
-                  if (place.distanceM > 0)
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${place.distanceM.toStringAsFixed(0)}m',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
 
-  /// 추천 장소 리스트 아이템
+  /// 추천 장소 리스트 아이템: 브랜드 아이콘, 장소명, 혼잡도 배지, 거리, chevron
   Widget _buildRecommendedPlaceCard(PlaceWithZone placeWithZone) {
     final place = placeWithZone.place;
     final zone = placeWithZone.zone;
 
     return InkWell(
-      onTap: () => _onRecommendedPlaceSelected(placeWithZone),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 7),
+      onTap: () => _handleRecommendedPlaceTap(placeWithZone),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.grey[200]!,
+            width: 1,
+          ),
+        ),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 브랜드 아이콘
-            _buildBrandIcon(place.name, size: 48),
+            _buildBrandIcon(place.name, size: 40),
             const SizedBox(width: 12),
             // 장소 정보
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // 장소명
+                  // 장소명 (max 1 line, ellipsis)
                   Text(
                     place.name,
                     style: const TextStyle(
                       fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w600,
                       color: Colors.black87,
                     ),
                     maxLines: 1,
@@ -842,63 +746,47 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                   // 혼잡도 배지와 거리
                   Row(
                     children: [
-                      // 혼잡도 상태
+                      // 혼잡도 배지
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: _getCrowdingColor(zone.crowdingLevel).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        alignment: Alignment.center,
                         child: Text(
                           zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유',
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             color: _getCrowdingColor(zone.crowdingLevel),
                             fontWeight: FontWeight.w600,
-                            height: 1.0, // 줄 간격을 1.0으로 설정하여 세로 중앙 정렬 개선
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       // 거리
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.location_on, size: 13, color: Colors.grey[600]),
-                          const SizedBox(width: 3),
-                          Text(
-                            '${place.distanceM.toStringAsFixed(0)}m',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey[600],
-                            ),
+                      if (place.distanceM > 0)
+                        Text(
+                          '${place.distanceM.toStringAsFixed(0)}m',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
                           ),
-                        ],
-                      ),
+                        ),
                     ],
                   ),
                 ],
               ),
             ),
+            // Chevron
+            const Icon(
+              Icons.chevron_right,
+              color: Colors.grey,
+              size: 24,
+            ),
           ],
         ),
       ),
     );
-  }
-
-  /// 혼잡도 해석 텍스트 반환
-  String _getCongestionInterpretation(ZoneInfo zone) {
-    if (zone.crowdingLevel == '여유' || zone.crowdingLevel == '원활') {
-      return '현재 여유로운 상태입니다';
-    } else if (zone.crowdingLevel == '약간 붐빔') {
-      return '약간 붐비지만 이용 가능합니다';
-    } else if (zone.crowdingLevel == '붐빔') {
-      return '현재 붐비는 상태입니다';
-    }
-    return zone.crowdingMessage.isNotEmpty
-        ? zone.crowdingMessage
-        : '혼잡도 정보를 확인하세요';
   }
 
   /// 브랜드 아이콘 빌더 (원형)
