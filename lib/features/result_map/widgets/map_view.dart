@@ -249,10 +249,35 @@ class _MapViewState extends State<MapView> {
   @override
   void didUpdateWidget(MapView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    
+    // recommendedPlaces 변경 감지 개선: null 체크 및 리스트 내용 비교
+    bool recommendedPlacesChanged = false;
+    if (widget.recommendedPlaces == null && oldWidget.recommendedPlaces == null) {
+      recommendedPlacesChanged = false;
+    } else if (widget.recommendedPlaces == null || oldWidget.recommendedPlaces == null) {
+      recommendedPlacesChanged = true; // null <-> 리스트 변경
+    } else {
+      // 둘 다 null이 아닌 경우: 길이 또는 내용 비교
+      if (widget.recommendedPlaces!.length != oldWidget.recommendedPlaces!.length) {
+        recommendedPlacesChanged = true;
+      } else {
+        // 길이가 같아도 내용이 다를 수 있으므로 ID 비교
+        final newIds = widget.recommendedPlaces!.map((p) => p.place.id).toSet();
+        final oldIds = oldWidget.recommendedPlaces!.map((p) => p.place.id).toSet();
+        recommendedPlacesChanged = !newIds.containsAll(oldIds) || !oldIds.containsAll(newIds);
+      }
+    }
+    
     // zoneInfo나 selectedPlace, recommendedPlaces가 변경되면 POI 업데이트 및 카메라 이동
     if (widget.zoneInfo != oldWidget.zoneInfo ||
         widget.selectedPlace?.id != oldWidget.selectedPlace?.id ||
-        widget.recommendedPlaces?.length != oldWidget.recommendedPlaces?.length) {
+        recommendedPlacesChanged) {
+      debugPrint('[MapView] didUpdateWidget: 변경 감지됨');
+      debugPrint('[MapView] - zoneInfo 변경: ${widget.zoneInfo != oldWidget.zoneInfo}');
+      debugPrint('[MapView] - selectedPlace 변경: ${widget.selectedPlace?.id != oldWidget.selectedPlace?.id}');
+      debugPrint('[MapView] - recommendedPlaces 변경: $recommendedPlacesChanged');
+      debugPrint('[MapView] - recommendedPlaces 개수: ${widget.recommendedPlaces?.length ?? 0}');
+      
       // 선택된 매장이 변경되면 위치 업데이트 및 카메라 이동
       if (widget.selectedPlace != null) {
         setState(() {
@@ -318,6 +343,7 @@ class _MapViewState extends State<MapView> {
         });
 
         debugPrint('[MapView] 상태 업데이트 완료: _isMapReady=$_isMapReady, _controller=${_controller != null}');
+        debugPrint('[MapView] recommendedPlaces: ${widget.recommendedPlaces?.length ?? 0}개');
 
         // 지도 준비 완료 후 카메라 이동 및 POI 추가
         _moveCameraToMarker();
@@ -452,15 +478,21 @@ class _MapViewState extends State<MapView> {
 
   /// 추천 장소 POI 업데이트
   Future<void> _updateRecommendedPlacesPoi() async {
+    debugPrint('[MapView] _updateRecommendedPlacesPoi 호출됨');
+    debugPrint('[MapView] _isMapReady: $_isMapReady, _controller: ${_controller != null}');
+    debugPrint('[MapView] recommendedPlaces: ${widget.recommendedPlaces?.length ?? 0}개');
+    
     if (!_isMapReady || _controller == null) {
       debugPrint('[MapView] 추천 장소 POI 업데이트 스킵: 지도가 준비되지 않음');
       return;
     }
 
     // 기존 추천 장소 POI 제거
+    debugPrint('[MapView] 기존 추천 장소 POI 제거 중: ${_recommendedPois.length}개');
     for (final poi in _recommendedPois) {
       try {
         await _controller!.labelLayer.removePoi(poi);
+        debugPrint('[MapView] 기존 추천 장소 POI 제거 완료');
       } catch (e) {
         debugPrint('[MapView] 추천 장소 POI 제거 실패: $e');
       }
@@ -469,11 +501,14 @@ class _MapViewState extends State<MapView> {
 
     // 추천 장소가 없으면 종료
     if (widget.recommendedPlaces == null || widget.recommendedPlaces!.isEmpty) {
+      debugPrint('[MapView] 추천 장소가 없어서 POI 추가 스킵');
       return;
     }
 
     // 새 추천 장소 POI 추가 (최대 3개)
     final placesToShow = widget.recommendedPlaces!.take(3).toList();
+    debugPrint('[MapView] 추천 장소 POI 추가 시작: ${placesToShow.length}개');
+    
     for (final placeWithZone in placesToShow) {
       try {
         final place = placeWithZone.place;
@@ -481,6 +516,8 @@ class _MapViewState extends State<MapView> {
         final position = LatLng(place.latitude, place.longitude);
         final crowdingLevel = zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유';
         final poiText = '${place.name}\n$crowdingLevel';
+
+        debugPrint('[MapView] 추천 장소 처리 중: ${place.name}, 위치: ${place.latitude}, ${place.longitude}, 혼잡도: $crowdingLevel');
 
         // 추천 장소의 실제 혼잡도에 따라 색상 결정 (API 결과 반영)
         // 추천 장소 마커 사용 (isRecommended: true)
@@ -509,11 +546,15 @@ class _MapViewState extends State<MapView> {
         );
 
         _recommendedPois.add(addedPoi);
-        debugPrint('[MapView] ✅ 추천 장소 POI 추가 성공: ${place.name}');
-      } catch (e) {
-        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${placeWithZone.place.name}, $e');
+        debugPrint('[MapView] ✅ 추천 장소 POI 추가 성공: ${place.name}, POI: $addedPoi');
+      } catch (e, stackTrace) {
+        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${placeWithZone.place.name}');
+        debugPrint('[MapView] 에러: $e');
+        debugPrint('[MapView] 스택 트레이스: $stackTrace');
       }
     }
+    
+    debugPrint('[MapView] 추천 장소 POI 업데이트 완료: 총 ${_recommendedPois.length}개 추가됨');
   }
 
   /// 위치 스트림 구독 시작
