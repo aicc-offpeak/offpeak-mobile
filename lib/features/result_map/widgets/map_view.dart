@@ -58,11 +58,36 @@ class _MapViewState extends State<MapView> {
   final Map<String, String> _brandIconCache = {};
   final Dio _dio = Dio();
 
-  /// 혼잡도에 따라 마커 이미지 경로 반환
+  /// 혼잡도에 따라 선택 매장 마커 이미지 경로 반환
   /// zoneInfo가 null이면 회색 마커 (API 실패 또는 정보 없음)
-  String _getMarkerImagePath(ZoneInfo? zoneInfo) {
+  /// 주의: KakaoMap SDK는 하위 폴더를 지원하지 않을 수 있으므로 icons/ 직하위에 파일명으로 구분
+  String _getSelectedMarkerImagePath(ZoneInfo? zoneInfo) {
     if (zoneInfo == null || zoneInfo.crowdingLevel.isEmpty) {
-      return 'assets/icons/marker_grey.png';
+      return 'assets/icons/marker_selected_grey.png'; // 정보 없음
+    }
+
+    final crowdingLevel = zoneInfo.crowdingLevel;
+    
+    if (crowdingLevel == '여유' || crowdingLevel == '원활') {
+      return 'assets/icons/marker_selected_green.png';
+    } else if (crowdingLevel == '보통') {
+      return 'assets/icons/marker_selected_yellow.png';
+    } else if (crowdingLevel == '약간 붐빔') {
+      return 'assets/icons/marker_selected_orange.png';
+    } else if (crowdingLevel == '붐빔') {
+      return 'assets/icons/marker_selected_red.png';
+    }
+    
+    return 'assets/icons/marker_selected_grey.png'; // 알 수 없는 혼잡도 레벨
+  }
+
+  /// 혼잡도에 따라 추천 매장 마커 이미지 경로 반환
+  /// 추천 매장은 일반적으로 여유 상태이므로 green 사용
+  /// 주의: KakaoMap SDK는 하위 폴더를 지원하지 않을 수 있으므로 icons/ 직하위에 파일명으로 구분
+  /// 추천 매장 마커는 marker_*.png 형식 (selected가 없음)
+  String _getRecommendedMarkerImagePath(ZoneInfo? zoneInfo) {
+    if (zoneInfo == null || zoneInfo.crowdingLevel.isEmpty) {
+      return 'assets/icons/marker_grey.png'; // 정보 없음
     }
 
     final crowdingLevel = zoneInfo.crowdingLevel;
@@ -150,9 +175,14 @@ class _MapViewState extends State<MapView> {
   }
 
   /// 마커 아이콘 생성 (브랜드 아이콘 또는 기본 마커)
-  /// 현재는 KakaoMap SDK가 네트워크 이미지를 직접 지원하지 않으므로 기본 마커 사용
-  /// 브랜드 아이콘은 다운로드하여 캐시에 저장 (나중에 사용 가능)
-  Future<KImage> _createMarkerIcon(Place? place, ZoneInfo? zoneInfo, {double widthMultiplier = 1.0, double heightMultiplier = 1.0}) async {
+  /// isRecommended가 true면 추천 매장 마커, false면 선택 매장 마커 사용
+  Future<KImage> _createMarkerIcon(
+    Place? place, 
+    ZoneInfo? zoneInfo, {
+    bool isRecommended = false,
+    double widthMultiplier = 1.0, 
+    double heightMultiplier = 1.0,
+  }) async {
     // 브랜드 아이콘 URL이 있으면 다운로드하여 캐시에 저장 (백그라운드)
     if (place?.imageUrl != null && place!.imageUrl.isNotEmpty && place.imageUrl.startsWith('http')) {
       // 비동기로 다운로드 (결과를 기다리지 않음)
@@ -166,13 +196,37 @@ class _MapViewState extends State<MapView> {
       debugPrint('[MapView] 브랜드 아이콘 다운로드 시작: ${place.imageUrl}');
     }
     
-    // 현재는 KakaoMap SDK가 네트워크 이미지를 직접 지원하지 않으므로 기본 마커 사용
-    // TODO: 나중에 네이티브 플러그인 또는 다른 방법으로 브랜드 아이콘 표시 구현
-    return KImage.fromAsset(
-      _getMarkerImagePath(zoneInfo),
-      (_markerWidth * widthMultiplier).toInt(),
-      (_markerHeight * heightMultiplier).toInt(),
-    );
+    // 선택 매장 또는 추천 매장에 따라 적절한 마커 경로 사용
+    final markerPath = isRecommended 
+        ? _getRecommendedMarkerImagePath(zoneInfo)
+        : _getSelectedMarkerImagePath(zoneInfo);
+    
+    debugPrint('[MapView] 마커 이미지 경로: $markerPath');
+    debugPrint('[MapView] 마커 크기: ${(_markerWidth * widthMultiplier).toInt()}x${(_markerHeight * heightMultiplier).toInt()}');
+    debugPrint('[MapView] isRecommended: $isRecommended, zoneInfo: ${zoneInfo?.crowdingLevel ?? "null"}');
+    
+    try {
+      final kImage = KImage.fromAsset(
+        markerPath,
+        (_markerWidth * widthMultiplier).toInt(),
+        (_markerHeight * heightMultiplier).toInt(),
+      );
+      debugPrint('[MapView] ✅ KImage 생성 성공: $markerPath');
+      return kImage;
+    } catch (e, stackTrace) {
+      debugPrint('[MapView] ❌ KImage 생성 실패: $e');
+      debugPrint('[MapView] 스택 트레이스: $stackTrace');
+      // 에러 발생 시 기본 마커 사용 (fallback)
+      final fallbackPath = isRecommended
+          ? 'assets/icons/marker_green.png'
+          : 'assets/icons/marker_selected_green.png';
+      debugPrint('[MapView] Fallback 마커 사용: $fallbackPath');
+      return KImage.fromAsset(
+        fallbackPath,
+        (_markerWidth * widthMultiplier).toInt(),
+        (_markerHeight * heightMultiplier).toInt(),
+      );
+    }
   }
 
   @override
@@ -340,9 +394,11 @@ class _MapViewState extends State<MapView> {
         // PoiStyle에 PNG 기반 아이콘 설정
         // 브랜드 아이콘이 있으면 사용, 없으면 혼잡도에 따라 적절한 색상의 마커 이미지 사용
         // 원본 PNG 비율을 유지하여 찌그러짐 방지
+        // 선택 매장이므로 isRecommended: false (기본값)
         final markerIcon = await _createMarkerIcon(
           widget.selectedPlace,
           widget.zoneInfo,
+          isRecommended: false,
         );
         
         // anchor는 KPoint 타입을 사용 (x, y = 아이콘 하단 중앙)
@@ -353,16 +409,19 @@ class _MapViewState extends State<MapView> {
           applyDpScale: true,
         );
         
-        debugPrint('[MapView] PoiStyle 생성: 브랜드 아이콘 또는 기본 마커, size=${_markerWidth.toInt()}x${_markerHeight.toInt()}, anchor=(0.5, 1.0)');
+        final markerPath = _getSelectedMarkerImagePath(widget.zoneInfo);
+        debugPrint('[MapView] PoiStyle 생성: 마커 경로=$markerPath, size=${_markerWidth.toInt()}x${_markerHeight.toInt()}, anchor=(0.5, 1.0)');
         
         // addPoi는 Future<Poi>를 반환하므로 await 필요
         // text 파라미터로 텍스트 전달
         // style 파라미터는 필수이므로 PoiStyle() 사용
+        debugPrint('[MapView] POI 추가 전: position=$position, text=$poiText');
         final addedPoi = await _controller!.labelLayer.addPoi(
           position,
           text: poiText,
           style: poiStyle,
         );
+        debugPrint('[MapView] POI 추가 후: addedPoi=$addedPoi');
         
         // POI가 실제로 추가되었는지 확인
         debugPrint('[MapView] POI 추가 후 labelLayer 상태 확인');
@@ -418,12 +477,13 @@ class _MapViewState extends State<MapView> {
         final position = LatLng(place.latitude, place.longitude);
         final poiText = '${place.name}\n여유';
 
-        // 추천 장소는 선택 장소보다 작은 마커 사용 (항상 여유 상태이므로 green)
-        // 브랜드 아이콘이 있으면 사용, 없으면 기본 마커 사용
-        // 추천 장소는 항상 여유 상태이므로 zoneInfo를 null로 전달 (기본 green 마커)
+        // 추천 장소는 선택 장소보다 작은 마커 사용
+        // 추천 장소의 혼잡도에 따라 색상이 결정됨 (일반적으로 여유 상태)
+        // 추천 장소 마커 사용 (isRecommended: true)
         final markerIcon = await _createMarkerIcon(
           place,
-          null, // 추천 장소는 항상 여유 상태
+          null, // 추천 장소는 일반적으로 여유 상태이므로 null 전달 (green 마커)
+          isRecommended: true,
           widthMultiplier: 0.8,
           heightMultiplier: 0.8,
         );
@@ -434,6 +494,9 @@ class _MapViewState extends State<MapView> {
           applyDpScale: true,
         );
 
+        final markerPath = _getRecommendedMarkerImagePath(null);
+        debugPrint('[MapView] 추천 장소 POI 추가 시도: place=${place.name}, markerPath=$markerPath, position=$position');
+        
         final addedPoi = await _controller!.labelLayer.addPoi(
           position,
           text: poiText,
@@ -441,7 +504,7 @@ class _MapViewState extends State<MapView> {
         );
 
         _recommendedPois.add(addedPoi);
-        debugPrint('[MapView] ✅ 추천 장소 POI 추가: ${place.name}');
+        debugPrint('[MapView] ✅ 추천 장소 POI 추가 성공: ${place.name}');
       } catch (e) {
         debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${place.name}, $e');
       }
