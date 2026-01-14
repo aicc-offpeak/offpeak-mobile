@@ -19,7 +19,7 @@ import '../../../data/models/zone_info.dart';
 class MapView extends StatefulWidget {
   final Place? selectedPlace;
   final ZoneInfo? zoneInfo;
-  final List<Place>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시)
+  final List<PlaceWithZone>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시, zoneInfo 포함)
 
   const MapView({
     super.key,
@@ -472,17 +472,20 @@ class _MapViewState extends State<MapView> {
 
     // 새 추천 장소 POI 추가 (최대 3개)
     final placesToShow = widget.recommendedPlaces!.take(3).toList();
-    for (final place in placesToShow) {
+    for (final placeWithZone in placesToShow) {
       try {
+        final place = placeWithZone.place;
+        final zone = placeWithZone.zone;
         final position = LatLng(place.latitude, place.longitude);
-        final poiText = '${place.name}\n여유';
+        final crowdingLevel = zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유';
+        final poiText = '${place.name}\n$crowdingLevel';
 
         // 추천 장소는 선택 장소보다 작은 마커 사용
-        // 추천 장소의 혼잡도에 따라 색상이 결정됨 (일반적으로 여유 상태)
+        // 추천 장소의 실제 혼잡도에 따라 색상 결정 (API 결과 반영)
         // 추천 장소 마커 사용 (isRecommended: true)
         final markerIcon = await _createMarkerIcon(
           place,
-          null, // 추천 장소는 일반적으로 여유 상태이므로 null 전달 (green 마커)
+          zone, // 실제 API 결과의 zoneInfo 전달
           isRecommended: true,
           widthMultiplier: 0.8,
           heightMultiplier: 0.8,
@@ -494,8 +497,8 @@ class _MapViewState extends State<MapView> {
           applyDpScale: true,
         );
 
-        final markerPath = _getRecommendedMarkerImagePath(null);
-        debugPrint('[MapView] 추천 장소 POI 추가 시도: place=${place.name}, markerPath=$markerPath, position=$position');
+        final markerPath = _getRecommendedMarkerImagePath(zone);
+        debugPrint('[MapView] 추천 장소 POI 추가 시도: place=${place.name}, zone=${zone.crowdingLevel}, markerPath=$markerPath, position=$position');
         
         final addedPoi = await _controller!.labelLayer.addPoi(
           position,
@@ -506,7 +509,7 @@ class _MapViewState extends State<MapView> {
         _recommendedPois.add(addedPoi);
         debugPrint('[MapView] ✅ 추천 장소 POI 추가 성공: ${place.name}');
       } catch (e) {
-        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${place.name}, $e');
+        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${placeWithZone.place.name}, $e');
       }
     }
   }

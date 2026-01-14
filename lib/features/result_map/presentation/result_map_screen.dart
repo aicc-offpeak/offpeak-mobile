@@ -350,7 +350,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             MapView(
               selectedPlace: selectedPlace,
               zoneInfo: (!_isLoading) ? _displayZone : null,
-              recommendedPlaces: (_insightData != null && _isCongested) ? _recommendedPlaces.map((p) => p.place).toList() : null,
+              recommendedPlaces: (_insightData != null && _isCongested) ? _recommendedPlaces : null,
             ),
             // 상단 섹션: 항상 표시
             if (selectedPlace != null)
