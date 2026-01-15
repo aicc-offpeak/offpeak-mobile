@@ -20,24 +20,28 @@ class _DesignTokens {
   static const Color primary = Color(0xFF007AFF);
   static const Color warning = Color(0xFFFF6B35);
   static const Color success = Color(0xFF2E7D32);
-  static const Color grayBg = Color(0xFFF9F9F9);
+  static const Color grayBg = Color(0xFFF5F5F5); // #F9F9F9 → #F5F5F5
   static const Color grayBorder = Color(0xFFE0E0E0);
   static const Color grayText = Color(0xFF666666);
+  static const Color grayTextTertiary = Color(0xFF999999); // 추가
   static const Color black = Color(0xFF1A1A1A);
   static const Color brandIconBg = Color(0xFFFFD700); // #FFD700
+  static const Color handleColor = Color(0xFFD1D1D6); // 핸들 색상
   
   // Badge colors
   static const Map<String, Map<String, Color>> badgeColors = {
-    '여유': {'bg': Color(0xFFE8F5E9), 'text': Color(0xFF2E7D32)},
-    '보통': {'bg': Color(0xFFFFFCDD), 'text': Color(0xFFF7BB09)}, // 배경색 0xFFFFFEF5와 0xFFFFF9C4의 중간, 글씨 r247 g187 b9
+    '여유': {'bg': Color(0xFFC8E6C9), 'text': Color(0xFF1B5E20)}, // 더 진하게
+    '보통': {'bg': Color(0xFFFFE894), 'text': Color(0xFFF59C00)}, // 원래대로 복구
     '약간 붐빔': {'bg': Color(0xFFFFF3E0), 'text': Color(0xFFFF6B35)},
     '붐빔': {'bg': Color(0xFFFFEBEE), 'text': Color(0xFFD32F2F)},
   };
   
   // Spacing
   static const double spacing4 = 4.0;
+  static const double spacing6 = 6.0; // 추가
   static const double spacing8 = 8.0;
   static const double spacing12 = 12.0;
+  static const double spacing14 = 14.0; // 추가
   static const double spacing16 = 16.0;
   static const double spacing20 = 20.0;
   static const double spacing24 = 24.0;
@@ -757,7 +761,10 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final placeName = selectedPlace.name;
 
     return Container(
-      padding: const EdgeInsets.all(_DesignTokens.spacing16),
+      padding: const EdgeInsets.symmetric(
+        horizontal: _DesignTokens.spacing20,
+        vertical: _DesignTokens.spacing16,
+      ),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border(
@@ -766,6 +773,13 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             width: 1,
           ),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -792,44 +806,44 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     color: _DesignTokens.grayBg,
                     borderRadius: BorderRadius.circular(4),
                   ),
-            child: const Text(
+                  child: const Text(
                     '기준',
-              style: TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       color: _DesignTokens.grayText,
-              ),
-            ),
-          ),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 4),
                 // 장소명
                 Text(
                   placeName,
                   style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                     color: _DesignTokens.black,
                   ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                 ),
               ],
-              ),
+            ),
           ),
           // Right: 다시 검색 버튼
-              TextButton(
-                onPressed: () {
-                  Navigator.pushReplacementNamed(context, Routes.search);
-                },
-                child: const Text(
+          TextButton(
+            onPressed: () {
+              Navigator.pushReplacementNamed(context, Routes.search);
+            },
+            child: const Text(
               '다시 검색',
-                  style: TextStyle(
-                    fontSize: 16,
+              style: TextStyle(
+                fontSize: 16,
                 color: _DesignTokens.primary,
-                  ),
-                ),
               ),
-            ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -883,8 +897,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 8,
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
             offset: const Offset(0, -2),
           ),
         ],
@@ -915,8 +929,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
           _DesignTokens.spacing20,
+          _DesignTokens.spacing24,
           _DesignTokens.spacing20,
-          _DesignTokens.spacing16,
           _DesignTokens.spacing16,
         ),
       child: Column(
@@ -963,7 +977,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             if (_isBottomSheetExpanded && isCrowded) ...[
               // Section 3: Segmented control tabs (혼잡할 때만 표시)
             Padding(
-                padding: const EdgeInsets.only(top: _DesignTokens.spacing16),
+                padding: const EdgeInsets.only(top: _DesignTokens.spacing20),
                 child: _buildSegmentedControl(
                   selectedTab: _selectedTab,
                   onTabChanged: _onTabChanged,
@@ -1026,19 +1040,19 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     
     return Container(
       padding: const EdgeInsets.symmetric(
-        horizontal: _DesignTokens.spacing12,
-        vertical: _DesignTokens.spacing4,
+        horizontal: _DesignTokens.spacing14,
+        vertical: _DesignTokens.spacing6,
       ),
       decoration: BoxDecoration(
         color: badgeConfig['bg'],
-        borderRadius: BorderRadius.circular(_DesignTokens.radius12),
+        borderRadius: BorderRadius.circular(_DesignTokens.radius16),
       ),
       child: Text(
         crowdingLevel.isNotEmpty ? crowdingLevel : '여유',
               style: TextStyle(
           fontSize: 13,
           color: badgeConfig['text'],
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -1061,7 +1075,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     return Text(
       statusText,
       style: const TextStyle(
-        fontSize: 15,
+        fontSize: 14,
         color: _DesignTokens.grayText,
       ),
     );
@@ -1107,29 +1121,34 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     required bool isSelected,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(_DesignTokens.radius8),
-          boxShadow: isSelected
-              ? [
-          BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(_DesignTokens.radius8),
+            boxShadow: isSelected
+                ? [
+            BoxShadow(
+                      color: Colors.black.withOpacity(0.12),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+                  ]
+                : null,
           ),
-                ]
-              : null,
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-            color: isSelected ? _DesignTokens.black : _DesignTokens.grayText,
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+              color: isSelected ? _DesignTokens.black : _DesignTokens.grayText,
+            ),
           ),
         ),
       ),
@@ -1174,7 +1193,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const Text(
           '이때 오면 여유로워요',
           style: TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
           ),
@@ -1231,7 +1250,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const Text(
           '이때 오면 여유로워요',
           style: TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
           ),
@@ -1258,7 +1277,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const Text(
           '이때 오면 여유로워요',
           style: TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
           ),
@@ -1280,7 +1299,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const Text(
           '이때 오면 여유로워요',
           style: TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
           ),
@@ -1450,7 +1469,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 Text(
           headerText,
                   style: const TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
           ),
@@ -1513,7 +1532,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         Text(
           headerText,
           style: const TextStyle(
-            fontSize: 17,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
           ),
@@ -1703,6 +1722,13 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         decoration: BoxDecoration(
           color: _DesignTokens.grayBg,
           borderRadius: BorderRadius.circular(_DesignTokens.radius12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 3,
+              offset: const Offset(0, 1),
+            ),
+          ],
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
