@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:kakao_map_sdk/kakao_map_sdk.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -22,6 +23,7 @@ class MapView extends StatefulWidget {
   final List<PlaceWithZone>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시, zoneInfo 포함)
   final double? topCardHeight; // 상단 카드 높이 (픽셀)
   final double? bottomCardHeight; // 하단 카드 높이 (픽셀)
+  final ZoneInfo? baseZoneInfo; // 검색 매장의 혼잡도 정보 (초기 카메라 위치 조정용)
 
   const MapView({
     super.key,
@@ -30,6 +32,7 @@ class MapView extends StatefulWidget {
     this.recommendedPlaces,
     this.topCardHeight,
     this.bottomCardHeight,
+    this.baseZoneInfo,
   });
 
   @override
@@ -47,6 +50,14 @@ class _MapViewState extends State<MapView> {
   StreamSubscription<LocationData>? _locationSubscription;
   LatLng? _lastUserLocationPoiPosition; // 마지막으로 POI를 생성한 위치 (throttle용)
   DateTime? _lastUserLocationUpdateTime; // 마지막 업데이트 시간 (throttle용)
+  bool _isInitialLoad = true; // 초기 로드 여부 (검색 매장 혼잡도 기반 위치 조정용)
+  
+  // 동심원 가이드 관련
+  // 플러그인 코드 수정 후 _controller를 통해 메서드 호출
+  LatLng? _lastRingsUpdatePosition; // 마지막으로 동심원을 업데이트한 위치 (throttle용)
+  DateTime? _lastRingsUpdateTime; // 마지막 동심원 업데이트 시간 (throttle용)
+  double _currentZoomLevel = 16.0; // 현재 줌 레벨
+  bool _ringsInitialized = false; // 동심원 초기화 여부
 
   static const _zoomLevel = 16;
   
@@ -282,7 +293,7 @@ class _MapViewState extends State<MapView> {
       debugPrint('[MapView] - recommendedPlaces 변경: $recommendedPlacesChanged');
       debugPrint('[MapView] - recommendedPlaces 개수: ${widget.recommendedPlaces?.length ?? 0}');
       
-      // 선택된 매장이 변경되면 위치 업데이트 및 카메라 이동
+      // 선택된 매장이 변경되면 위치 업데이트 및 카메라 이동 (초기 로드가 아닌 경우)
       if (widget.selectedPlace != null) {
         setState(() {
           _currentPosition = LatLng(
@@ -290,7 +301,7 @@ class _MapViewState extends State<MapView> {
             widget.selectedPlace!.longitude,
           );
         });
-        _moveCameraToMarker();
+        _moveCameraToMarker(isInitialLoad: false);
       }
       // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
       _updateRecommendedPlacesPoi().then((_) {
@@ -349,8 +360,9 @@ class _MapViewState extends State<MapView> {
         debugPrint('[MapView] 상태 업데이트 완료: _isMapReady=$_isMapReady, _controller=${_controller != null}');
         debugPrint('[MapView] recommendedPlaces: ${widget.recommendedPlaces?.length ?? 0}개');
 
-        // 지도 준비 완료 후 카메라 이동 및 POI 추가
-        _moveCameraToMarker();
+        // 지도 준비 완료 후 카메라 이동 및 POI 추가 (초기 로드)
+        _moveCameraToMarker(isInitialLoad: true);
+        _isInitialLoad = false; // 초기 로드 완료
         debugPrint('[MapView] POI 추가 시작');
         // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
         _updateRecommendedPlacesPoi().then((_) {
@@ -364,10 +376,20 @@ class _MapViewState extends State<MapView> {
           debugPrint('[MapView] 초기 사용자 위치 로드 에러: $e');
         });
         debugPrint('[MapView] POI 추가 순서 보장 완료');
+        
+        // 동심원 가이드 초기화
+        _initializeUserRings();
       },
       onCameraMoveEnd: (cameraPosition, zoomLevel) {
         debugPrint('[MapView] 카메라 이동 완료: $cameraPosition, zoom: $zoomLevel');
         // 카메라 이동은 기본 지도 동작에 맡기고, POI는 지도 엔진이 자동으로 따라감
+        // 줌 레벨 업데이트 및 100m 링 show/hide 처리
+        // zoomLevel은 GestureType이므로 cameraPosition에서 zoomLevel을 가져옴
+        final newZoomLevel = cameraPosition.zoomLevel.toDouble();
+        if (_currentZoomLevel != newZoomLevel) {
+          _currentZoomLevel = newZoomLevel;
+          _updateRingVisibilityByZoom();
+        }
       },
     );
   }
@@ -637,6 +659,9 @@ class _MapViewState extends State<MapView> {
 
     // POI 업데이트
     await _updateUserLocationPoi(newLocation);
+    
+    // 동심원 가이드 업데이트 (throttle 적용)
+    _updateUserRings(newLocation);
   }
 
   /// 두 좌표 간 거리 계산 (미터 단위)
@@ -698,12 +723,15 @@ class _MapViewState extends State<MapView> {
       _userLocationPoi = addedPoi;
       debugPrint('[MapView] ✅ 사용자 위치 POI 추가 성공');
       debugPrint('[MapView] 사용자 위치: ${location.latitude}, ${location.longitude}');
+      
+      // 동심원 가이드 업데이트 (초기 로드 시)
+      _updateUserRings(location);
     } catch (e) {
       debugPrint('[MapView] ❌ 사용자 위치 POI 추가 실패: $e');
     }
   }
 
-  void _moveCameraToMarker() {
+  void _moveCameraToMarker({bool isInitialLoad = false}) {
     if (!_isMapReady || _controller == null || _currentPosition == null) {
       debugPrint('[MapView] 카메라 이동 실패: 지도가 아직 준비되지 않음');
       return;
@@ -716,15 +744,37 @@ class _MapViewState extends State<MapView> {
     final topCardHeight = widget.topCardHeight ?? 100.0; // 기본값: 100px
     final bottomCardHeight = widget.bottomCardHeight ?? 250.0; // 기본값: 250px
     
-    // 상단 카드와 하단 카드의 중간 지점을 기준으로 마커를 위로 이동
+    // 초기 로드 시에만 검색 매장의 혼잡도에 따라 위치 조정
+    // 그 외의 경우(추천 매장 선택 등)에는 기본 50% 위치 사용
+    double targetVerticalRatio;
+    if (isInitialLoad && widget.baseZoneInfo != null) {
+      // 검색 매장의 혼잡도 확인
+      final baseCrowdingLevel = widget.baseZoneInfo!.crowdingLevel;
+      final isBaseCongested = baseCrowdingLevel == '약간 붐빔' || baseCrowdingLevel == '붐빔';
+      
+      if (isBaseCongested) {
+        // 25% 위치: 상단 카드 아래에서 화면의 25% 지점
+        // 계산: topCardHeight + (screenHeight - topCardHeight - bottomCardHeight) * 0.25
+        final availableHeight = screenHeight - topCardHeight - bottomCardHeight;
+        final targetY = topCardHeight + availableHeight * 0.25;
+        targetVerticalRatio = targetY / screenHeight;
+        debugPrint('[MapView] 초기 로드: 검색 매장 혼잡 → 25% 위치로 조정');
+      } else {
+        // 50% 위치: 카드들의 중간 지점
+        targetVerticalRatio = (topCardHeight + bottomCardHeight) / 2 / screenHeight;
+        debugPrint('[MapView] 초기 로드: 검색 매장 여유/보통 → 50% 위치로 조정');
+      }
+    } else {
+      // 초기 로드가 아니거나 baseZoneInfo가 없는 경우: 기본 50% 위치
+      targetVerticalRatio = (topCardHeight + bottomCardHeight) / 2 / screenHeight;
+      debugPrint('[MapView] 초기 로드 아님 또는 baseZoneInfo 없음 → 50% 위치로 조정');
+    }
+    
     // 위도 1도 ≈ 111km, 줌 레벨 16에서 화면 높이의 절반만큼 위로 이동하려면
     // 줌 레벨 16에서 화면 높이 ≈ 1km 정도이므로
-    // 위도 조정량 = (topCardHeight + bottomCardHeight) / 2 / screenHeight * (화면에 표시되는 위도 범위)
+    // 위도 조정량 = targetVerticalRatio * (화면에 표시되는 위도 범위)
     // 줌 레벨 16에서 화면에 표시되는 위도 범위는 대략 0.01도 정도
-    final offsetRatio = (topCardHeight + bottomCardHeight) / 2 / screenHeight;
-    // 줌 레벨에 따라 조정: 줌 레벨 16에서 화면 높이의 50%만큼 위로 이동하려면 약 0.005도
-    // 하단 카드가 오버레이되어 있으므로 더 큰 조정량 필요 (기존의 2배)
-    final latitudeOffset = offsetRatio * 0.01; // 줌 레벨 16 기준 대략적인 위도 조정량
+    final latitudeOffset = targetVerticalRatio * 0.01; // 줌 레벨 16 기준 대략적인 위도 조정량
     
     final adjustedPosition = LatLng(
       _currentPosition!.latitude + latitudeOffset,
@@ -734,6 +784,7 @@ class _MapViewState extends State<MapView> {
     debugPrint('[MapView] 원래 위치: $_currentPosition');
     debugPrint('[MapView] 조정된 위치: $adjustedPosition');
     debugPrint('[MapView] 상단 카드 높이: $topCardHeight, 하단 카드 높이: $bottomCardHeight');
+    debugPrint('[MapView] 목표 세로 비율: $targetVerticalRatio');
     debugPrint('[MapView] 위도 조정량: $latitudeOffset');
     
     // 카메라 위치 업데이트
@@ -744,6 +795,91 @@ class _MapViewState extends State<MapView> {
     // KakaoMapOption의 position이 이미 마커 좌표로 설정되어 있으므로,
     // 지도는 자동으로 올바른 위치에 표시됩니다.
     debugPrint('[MapView] 지도가 선택된 위치에 표시됩니다');
+  }
+
+  /// 동심원 가이드 초기화
+  /// 플러그인 내부에서 onMapReady 시점에 자동으로 초기화됨
+  /// Flutter에서는 별도 호출 불필요
+  Future<void> _initializeUserRings() async {
+    // 플러그인 내부에서 처리되므로 여기서는 마킹만
+    _ringsInitialized = true;
+    debugPrint('[MapView] ✅ 동심원 가이드 초기화 완료 (플러그인 내부 처리)');
+  }
+
+
+  /// 동심원 가이드 업데이트 (사용자 위치 변경 시)
+  /// 플러그인의 MethodChannel을 통해 updateUserRings 호출
+  Future<void> _updateUserRings(LatLng? userLocation) async {
+    if (!_isMapReady || _controller == null || !_ringsInitialized) {
+      return;
+    }
+
+    // 사용자 위치가 없으면 모든 링 숨김
+    if (userLocation == null) {
+      try {
+        // 플러그인 channel을 통해 hideAllRings 호출
+        await (_controller as dynamic).channel.invokeMethod('hideAllRings');
+      } catch (e) {
+        debugPrint('[MapView] ❌ 링 숨김 실패: $e');
+      }
+      return;
+    }
+
+    // Throttle 체크: 최소 300ms 간격 또는 2m 이상 이동
+    final now = DateTime.now();
+    if (_lastRingsUpdateTime != null) {
+      final timeDiff = now.difference(_lastRingsUpdateTime!);
+      if (timeDiff.inMilliseconds < 300) {
+        return; // 너무 빨리 업데이트 요청이 들어오면 스킵
+      }
+    }
+
+    if (_lastRingsUpdatePosition != null) {
+      final distance = _calculateDistance(
+        _lastRingsUpdatePosition!.latitude,
+        _lastRingsUpdatePosition!.longitude,
+        userLocation.latitude,
+        userLocation.longitude,
+      );
+      if (distance < 2.0) {
+        return; // 2m 미만 이동이면 스킵
+      }
+    }
+
+    // 업데이트 시간 및 위치 저장
+    _lastRingsUpdateTime = now;
+    _lastRingsUpdatePosition = userLocation;
+
+    try {
+      // 플러그인 channel을 통해 동심원 업데이트
+      // 플러그인 코드 수정 후 동작함
+      await (_controller as dynamic).channel.invokeMethod('updateUserRings', {
+        'latitude': userLocation.latitude,
+        'longitude': userLocation.longitude,
+        'zoomLevel': _currentZoomLevel,
+      });
+
+      debugPrint('[MapView] ✅ 동심원 가이드 업데이트 완료: ${userLocation.latitude}, ${userLocation.longitude}');
+    } catch (e) {
+      debugPrint('[MapView] ❌ 동심원 가이드 업데이트 실패: $e');
+    }
+  }
+
+  /// 줌 레벨에 따라 100m 링 show/hide
+  void _updateRingVisibilityByZoom() {
+    if (!_ringsInitialized || _controller == null) {
+      return;
+    }
+
+    try {
+      // 플러그인 channel을 통해 줌 레벨 업데이트
+      // 플러그인 코드 수정 후 동작함
+      (_controller as dynamic).channel.invokeMethod('updateZoomLevel', {
+        'zoomLevel': _currentZoomLevel,
+      });
+    } catch (e) {
+      debugPrint('[MapView] ❌ 줌 레벨 업데이트 실패: $e');
+    }
   }
 
   @override
@@ -822,6 +958,20 @@ class _MapViewState extends State<MapView> {
         }
       }
     }
+    // 동심원 가이드 정리
+    if (_ringsInitialized && _controller != null) {
+      try {
+        // dispose는 동기 메서드이므로 await 사용 불가
+        // 비동기 정리는 Future로 처리
+        // 플러그인 channel을 통해 disposeUserRings 호출
+        (_controller as dynamic).channel.invokeMethod('disposeUserRings').catchError((e) {
+          debugPrint('[MapView] 동심원 가이드 정리 실패: $e');
+        });
+      } catch (e) {
+        debugPrint('[MapView] 동심원 가이드 정리 실패: $e');
+      }
+    }
+    
     _controller = null;
     _isMapReady = false;
     _currentPoi = null;
@@ -829,6 +979,9 @@ class _MapViewState extends State<MapView> {
     _recommendedPois.clear();
     _lastUserLocationPoiPosition = null;
     _lastUserLocationUpdateTime = null;
+    _lastRingsUpdatePosition = null;
+    _lastRingsUpdateTime = null;
+    _ringsInitialized = false;
     super.dispose();
   }
 }

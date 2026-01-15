@@ -862,6 +862,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 bottomCardHeight: _isBottomSheetExpanded 
                     ? MediaQuery.of(context).size.height * 0.6 // 펼친 상태: 화면 높이의 60%
                     : 150.0, // 접힌 상태: 선택 매장 정보 + 상태 문구 (대략 150px)
+                baseZoneInfo: _baseSelectedPlaceWithZone?.zone, // 검색 매장의 혼잡도 정보 (초기 카메라 위치 조정용)
               )
             else
               // 지도 로딩 중: 흰 화면 + 돋보기 아이콘 + 문구
@@ -1199,18 +1200,19 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 Expanded(
                   child: _buildBottomSheetHeader(placeWithZone.place, zone),
                 ),
-                // 접기/펼치기 버튼
-                IconButton(
-                  icon: Icon(
-                    _isBottomSheetExpanded ? Icons.expand_less : Icons.expand_more,
-                    color: _DesignTokens.grayText,
+                // 접기/펼치기 버튼 (혼잡할 때만 표시)
+                if (isCrowded)
+                  IconButton(
+                    icon: Icon(
+                      _isBottomSheetExpanded ? Icons.expand_less : Icons.expand_more,
+                      color: _DesignTokens.grayText,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _isBottomSheetExpanded = !_isBottomSheetExpanded;
+                      });
+                    },
                   ),
-                  onPressed: () {
-                    setState(() {
-                      _isBottomSheetExpanded = !_isBottomSheetExpanded;
-                    });
-                  },
-                ),
               ],
             ),
             
