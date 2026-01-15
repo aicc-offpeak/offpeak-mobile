@@ -96,8 +96,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   PlacesInsightResponse? _insightData;
   bool _isLoading = false;
   bool _showLongLoadingIndicator = false; // 3초 이상 로딩 시 원형 프로그레스바 표시
-  bool _isDebugMode = false; // 디버깅 모드 여부
-  String _selectedCrowdingLevel = '붐빔'; // 선택된 혼잡도 레벨 (디버깅용)
   Place? _currentSelectedPlace; // 현재 선택된 장소 (recommended place 선택 시 업데이트)
   late AnimationController _animationController; // 애니메이션 컨트롤러
   RecommendTimesResponse? _recommendTimesData; // 추천 시간대 데이터
@@ -197,7 +195,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         maxAlternatives: 3,
       );
 
-      debugPrint('[ResultMapScreen] 인사이트 데이터 로딩 시작... (반경: ${radius}m)');
       final result = await _insightRepository.getInsight(request);
       
       if (mounted) {
@@ -205,18 +202,11 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           case ApiSuccess<PlacesInsightResponse>():
             final isCongested = result.data.selected.zone.isCongested;
             final alternatives = result.data.alternatives;
-            debugPrint('[ResultMapScreen] ✅ 데이터 로드 성공!');
-            debugPrint('[ResultMapScreen] - selected: ${result.data.selected.place.name}');
-            debugPrint('[ResultMapScreen] - alternatives: ${alternatives.length}개');
-            debugPrint('[ResultMapScreen] - isCongested: $isCongested');
-            debugPrint('[ResultMapScreen] - zone: ${result.data.selected.zone.crowdingLevel}');
             
             setState(() {
               _insightData = result.data;
               _isLoading = false;
               _showLongLoadingIndicator = false;
-              _isDebugMode = false; // 실제 API 모드
-              _selectedCrowdingLevel = result.data.selected.zone.crowdingLevel; // 실제 혼잡도로 초기화
               
               // PLACE 탭 상태 업데이트
               if (_selectedTab == 'place') {
@@ -235,12 +225,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               if (_baseSelectedPlaceWithZone == null) {
                 _baseSelectedPlaceWithZone = result.data.selected;
                 _baseRecommendations = List.from(alternatives);
-                debugPrint('[ResultMapScreen] ✅ 검색 매장 및 추천 매장 스냅샷 캡처 완료');
-                debugPrint('[ResultMapScreen] - 검색 매장: ${_baseSelectedPlaceWithZone!.place.name}');
-                debugPrint('[ResultMapScreen] - 추천 매장: ${_baseRecommendations.length}개');
               }
             });
-            debugPrint('[ResultMapScreen] setState 완료: _insightData=${_insightData != null}');
             // 혼잡 상태가 변경되면 애니메이션 재시작
             if (isCongested) {
               _animationController.forward();
@@ -248,22 +234,18 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               _animationController.reset();
             }
           case ApiFailure<PlacesInsightResponse>():
-            debugPrint('[ResultMapScreen] 데이터 로드 실패: ${result.message}');
             if (_selectedTab == 'place') {
               setState(() {
                 _placeTabState = PlaceTabState.error;
                 _placeTabError = result.message;
               });
             } else {
-              debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
               // API 실패 시 디버깅 모드로 전환 (초기 로드 시에만)
               _loadDebugModeData();
             }
         }
       }
     } catch (e, stackTrace) {
-      debugPrint('[ResultMapScreen] 예외 발생: $e');
-      debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
       if (mounted) {
         if (_selectedTab == 'place') {
           setState(() {
@@ -271,7 +253,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             _placeTabError = e.toString();
           });
         } else {
-          debugPrint('[ResultMapScreen] 디버깅 모드로 전환');
           // 예외 발생 시 디버깅 모드로 전환 (초기 로드 시에만)
           _loadDebugModeData();
         }
@@ -308,29 +289,28 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   void _loadDebugModeData() {
     if (_currentSelectedPlace == null) return;
 
-    debugPrint('[ResultMapScreen] 디버깅 모드 데이터 생성 중...');
-    
     // 검색 매장: base 스냅샷이 있으면 사용, 없으면 현재 선택된 장소 사용
     final basePlace = _baseSelectedPlaceWithZone?.place ?? _currentSelectedPlace!;
+    final defaultCrowdingLevel = '붐빔'; // 기본 혼잡도
     final baseZone = _baseSelectedPlaceWithZone?.zone ?? ZoneInfo(
       code: 'debug_selected',
       name: basePlace.name,
       lat: basePlace.latitude,
       lng: basePlace.longitude,
       distanceM: basePlace.distanceM,
-      crowdingLevel: _selectedCrowdingLevel,
-      crowdingRank: _selectedCrowdingLevel == '붐빔' ? 1 : 
-                    _selectedCrowdingLevel == '약간 붐빔' ? 2 :
-                    _selectedCrowdingLevel == '보통' ? 3 : 4,
-      crowdingColor: _selectedCrowdingLevel == '붐빔' ? 'red' :
-                     _selectedCrowdingLevel == '약간 붐빔' ? 'orange' :
-                     _selectedCrowdingLevel == '보통' ? 'yellow' : 'green',
+      crowdingLevel: defaultCrowdingLevel,
+      crowdingRank: defaultCrowdingLevel == '붐빔' ? 1 : 
+                    defaultCrowdingLevel == '약간 붐빔' ? 2 :
+                    defaultCrowdingLevel == '보통' ? 3 : 4,
+      crowdingColor: defaultCrowdingLevel == '붐빔' ? 'red' :
+                     defaultCrowdingLevel == '약간 붐빔' ? 'orange' :
+                     defaultCrowdingLevel == '보통' ? 'yellow' : 'green',
       crowdingUpdatedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       crowdingMessage: '디버깅 모드',
     );
     
     // 검색 매장의 혼잡도만 업데이트
-    final selectedZone = baseZone.copyWithCrowdingLevel(_selectedCrowdingLevel);
+    final selectedZone = baseZone.copyWithCrowdingLevel(defaultCrowdingLevel);
 
     // 추천 매장 3곳 하드코딩 (가산 지역)
     final recommendedPlaces = [
@@ -428,7 +408,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _insightData = debugData;
       _isLoading = false;
       _showLongLoadingIndicator = false;
-      _isDebugMode = true;
       _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
       // 추천 리스트가 처음 표시될 때 base 스냅샷 캡처 (검색 매장만 저장)
       if (debugData.alternatives.isNotEmpty && _viewState == ViewState.baseSelectedView) {
@@ -445,181 +424,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         );
       }
     });
-
-    debugPrint('[ResultMapScreen] ✅ 디버깅 모드 데이터 생성 완료');
-    debugPrint('[ResultMapScreen] - 검색 매장: ${basePlace.name}, 혼잡도: $_selectedCrowdingLevel');
-    debugPrint('[ResultMapScreen] - alternatives: ${recommendedPlaces.length}개');
-  }
-
-  /// 혼잡도 레벨 변경 (디버깅용) - 검색 매장에만 적용
-  void _onCrowdingLevelChanged(String newLevel) {
-    setState(() {
-      _selectedCrowdingLevel = newLevel;
-      _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
-    });
-    
-    // 검색 매장이 없으면 처리하지 않음
-    if (_baseSelectedPlaceWithZone == null && _insightData == null) return;
-    
-    // 붐빔이나 약간 붐빔으로 변경된 경우 추천 매장 API 호출
-    final isCrowded = newLevel == '붐빔' || newLevel == '약간 붐빔';
-    
-    if (isCrowded && _currentSelectedPlace != null) {
-      // 실제 API를 호출하여 추천 매장 가져오기
-      debugPrint('[ResultMapScreen] 디버그: 혼잡도가 붐빔/약간 붐빔으로 변경됨, 추천 매장 API 호출');
-      _loadInsightForDebugMode();
-    } else if (_isDebugMode && _insightData != null) {
-      // 디버깅 모드이고 혼잡하지 않은 경우 mock 데이터 사용
-      _loadDebugModeData();
-    } else if (_insightData != null) {
-      // 실제 API 모드인 경우: 검색 매장의 혼잡도만 업데이트
-      final baseZone = _baseSelectedPlaceWithZone?.zone ?? _insightData!.selected.zone;
-      final updatedBaseZone = baseZone.copyWithCrowdingLevel(newLevel);
-      
-      // base 스냅샷 업데이트
-      if (_baseSelectedPlaceWithZone != null) {
-        _baseSelectedPlaceWithZone = PlaceWithZone(
-          place: _baseSelectedPlaceWithZone!.place,
-          zone: updatedBaseZone,
-        );
-      }
-      
-      // 현재 선택된 장소가 검색 매장인 경우에만 혼잡도 업데이트
-      final isBaseSelected = _baseSelectedPlaceWithZone != null && 
-                            _insightData!.selected.place.id == _baseSelectedPlaceWithZone!.place.id;
-      
-      setState(() {
-        _insightData = PlacesInsightResponse(
-          selected: PlaceWithZone(
-            place: _insightData!.selected.place,
-            zone: isBaseSelected ? updatedBaseZone : _insightData!.selected.zone,
-          ),
-          alternatives: _insightData!.alternatives,
-        );
-      });
-    }
-  }
-  
-  /// 디버그 모드용 추천 매장 API 호출 (혼잡도 변경 시)
-  Future<void> _loadInsightForDebugMode() async {
-    if (_currentSelectedPlace == null) return;
-
-    setState(() {
-      _isLoading = true;
-      _showLongLoadingIndicator = false;
-    });
-
-    // 3초 후에도 로딩 중이면 원형 프로그레스바 표시
-    Future.delayed(const Duration(seconds: 3), () {
-      if (_isLoading && mounted) {
-        setState(() {
-          _showLongLoadingIndicator = true;
-        });
-      }
-    });
-
-    try {
-      final location = await _locationService.getCurrentPosition();
-      final radius = _placeRadiusMode == RadiusMode.expanded ? 1000 : 500;
-      final request = PlacesInsightRequest(
-        selected: _currentSelectedPlace!,
-        userLat: location.latitude,
-        userLng: location.longitude,
-        radiusM: radius,
-        maxAlternatives: 3,
-      );
-
-      debugPrint('[ResultMapScreen] 디버그 모드: 추천 매장 API 호출 (반경: ${radius}m)');
-      final result = await _insightRepository.getInsight(request);
-      
-      if (mounted) {
-        switch (result) {
-          case ApiSuccess<PlacesInsightResponse>():
-            final alternatives = result.data.alternatives;
-            debugPrint('[ResultMapScreen] ✅ 디버그 모드: 추천 매장 API 성공!');
-            debugPrint('[ResultMapScreen] - alternatives: ${alternatives.length}개');
-            
-            // 검색 매장의 혼잡도만 업데이트 (추천 매장의 혼잡도는 변경하지 않음)
-            final baseZone = _baseSelectedPlaceWithZone?.zone ?? result.data.selected.zone;
-            final updatedBaseZone = baseZone.copyWithCrowdingLevel(_selectedCrowdingLevel);
-            
-            // 현재 선택된 장소가 검색 매장인지 확인
-            final isBaseSelected = _baseSelectedPlaceWithZone != null && 
-                                  result.data.selected.place.id == _baseSelectedPlaceWithZone!.place.id;
-            
-            setState(() {
-              _insightData = PlacesInsightResponse(
-                selected: PlaceWithZone(
-                  place: result.data.selected.place,
-                  zone: isBaseSelected ? updatedBaseZone : result.data.selected.zone,
-                ),
-                alternatives: alternatives, // 추천 매장의 혼잡도는 API 결과 그대로 사용
-              );
-              _isLoading = false;
-              _showLongLoadingIndicator = false;
-              _isDebugMode = true; // 디버그 모드 유지
-              _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
-              
-              // PLACE 탭 상태 업데이트
-              if (_selectedTab == 'place') {
-                if (alternatives.isEmpty) {
-                  if (_placeRadiusMode == RadiusMode.base) {
-                    _placeTabState = PlaceTabState.emptyFirst;
-                  } else {
-                    _placeTabState = PlaceTabState.emptyExpanded;
-                  }
-                } else {
-                  _placeTabState = PlaceTabState.success;
-                }
-              }
-              
-              // base 스냅샷 업데이트 (검색 매장의 혼잡도만 업데이트)
-              if (_baseSelectedPlaceWithZone == null) {
-                _baseSelectedPlaceWithZone = PlaceWithZone(
-                  place: result.data.selected.place,
-                  zone: updatedBaseZone,
-                );
-                _baseRecommendations = List.from(alternatives);
-              } else {
-                // base 스냅샷의 zone만 업데이트 (추천 매장은 API 결과 사용)
-                _baseSelectedPlaceWithZone = PlaceWithZone(
-                  place: _baseSelectedPlaceWithZone!.place,
-                  zone: updatedBaseZone,
-                );
-                _baseRecommendations = List.from(alternatives);
-              }
-            });
-            
-            // 혼잡 상태이면 애니메이션 재시작
-            if (_selectedCrowdingLevel == '붐빔' || _selectedCrowdingLevel == '약간 붐빔') {
-              _animationController.forward();
-            } else {
-              _animationController.reset();
-            }
-          case ApiFailure<PlacesInsightResponse>():
-            debugPrint('[ResultMapScreen] 디버그 모드: 추천 매장 API 실패: ${result.message}');
-            if (mounted) {
-              setState(() {
-                _isLoading = false;
-                _showLongLoadingIndicator = false;
-              });
-              // API 실패 시 mock 데이터 사용
-              _loadDebugModeData();
-            }
-        }
-      }
-    } catch (e, stackTrace) {
-      debugPrint('[ResultMapScreen] 디버그 모드: 추천 매장 API 예외: $e');
-      debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _showLongLoadingIndicator = false;
-        });
-        // 예외 발생 시 mock 데이터 사용
-        _loadDebugModeData();
-      }
-    }
   }
 
   /// 현재 선택된 장소 정보 (API 또는 mock 데이터)
@@ -636,14 +440,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     
     // 현재 선택된 장소의 zone
     final zoneToUse = _insightData!.selected.zone;
-    
-    // 디버깅 모드이고 현재 선택된 장소가 검색 매장인 경우에만 혼잡도 업데이트
-    final isBaseSelected = _baseSelectedPlaceWithZone != null && 
-                          _insightData!.selected.place.id == _baseSelectedPlaceWithZone!.place.id;
-    
-    if (_isDebugMode && isBaseSelected && zoneToUse.crowdingLevel != _selectedCrowdingLevel) {
-      return zoneToUse.copyWithCrowdingLevel(_selectedCrowdingLevel);
-    }
     
     return zoneToUse;
   }
@@ -727,7 +523,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               }
             });
           case ApiFailure<RecommendTimesResponse>():
-            debugPrint('[ResultMapScreen] 추천 시간대 로드 실패: ${result.message}');
             setState(() {
               _timeTabState = TimeTabState.error;
               _timeTabError = result.message;
@@ -735,8 +530,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         }
       }
     } catch (e, stackTrace) {
-      debugPrint('[ResultMapScreen] 추천 시간대 로드 예외: $e');
-      debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
       if (mounted) {
         setState(() {
           _timeTabState = TimeTabState.error;
@@ -797,7 +590,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       // 검색 매장 추가 (선택 매장이 아닌 경우)
       if (_baseSelectedPlaceWithZone!.place.id != selectedPlaceId) {
         allOtherPlaces.add(_baseSelectedPlaceWithZone!);
-        debugPrint('[ResultMapScreen] 검색 매장 마커 추가: ${_baseSelectedPlaceWithZone!.place.name}');
       }
       
       // 추천 매장들 추가 (선택 매장이 아닌 경우)
@@ -806,7 +598,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           allOtherPlaces.add(rec);
         }
       }
-      debugPrint('[ResultMapScreen] 추천 매장 마커 추가: ${recommendationsToUse.length}개 중 ${allOtherPlaces.length - (selectedPlaceId != _baseSelectedPlaceWithZone!.place.id ? 1 : 0)}개');
     } else if (_insightData != null && recommendationsToUse.isNotEmpty) {
       // base 스냅샷이 없어도 현재 insightData의 추천 매장은 표시
       final selectedPlaceId = selectedPlace?.id;
@@ -815,7 +606,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           allOtherPlaces.add(rec);
         }
       }
-      debugPrint('[ResultMapScreen] 추천 매장 마커 추가 (base 없음): ${recommendationsToUse.length}개');
     }
     
     // 추천 매장 마커 표시 조건:
@@ -830,8 +620,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final recommendedPlaces = (baseIsCongested && isPlaceTabSelected && allOtherPlaces.isNotEmpty) 
         ? allOtherPlaces.take(3).toList() 
         : null;
-    
-    debugPrint('[ResultMapScreen] 마커 표시: 선택 매장=${selectedPlace?.name}, 일반 마커=${recommendedPlaces?.length ?? 0}개, 탭=$_selectedTab');
     
     return WillPopScope(
       onWillPop: () async {
@@ -943,8 +731,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _buildTopSection(selectedPlace),
-                      // 디버깅용: 혼잡도 선택 리스트 버튼
-                      if (_insightData != null) _buildCrowdingLevelSelector(),
                     ],
                   ),
                 ),
@@ -963,61 +749,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     );
   }
 
-  /// 디버깅용: 혼잡도 선택 리스트 버튼
-  Widget _buildCrowdingLevelSelector() {
-    final crowdingLevels = ['여유', '보통', '약간 붐빔', '붐빔'];
-    final currentLevel = _displayZone?.crowdingLevel ?? _selectedCrowdingLevel;
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(top: 8.0, left: 16.0, bottom: 8.0),
-        child: Wrap(
-          spacing: 8.0,
-          runSpacing: 8.0,
-          children: crowdingLevels.map((level) {
-            final isSelected = level == currentLevel;
-            return ChoiceChip(
-              label: Text(
-                level,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected ? Colors.white : Colors.black87,
-                ),
-              ),
-              selected: isSelected,
-              onSelected: (selected) {
-                if (selected) {
-                  _onCrowdingLevelChanged(level);
-                }
-              },
-              selectedColor: _getCrowdingColor(level),
-              backgroundColor: Colors.grey[200],
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  /// 혼잡도 레벨에 따른 색상 반환
-  Color _getCrowdingColor(String level) {
-    switch (level) {
-      case '여유':
-      case '원활':
-        return Colors.green;
-      case '보통':
-        return const Color(0xFFF9A825); // 가독성 있는 노란색 (amber 800)
-      case '약간 붐빔':
-        return Colors.deepOrange; // 더 진한 주황색으로 변경
-      case '붐빔':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
 
 
   /// 상단 고정 앵커: 브랜드 아이콘, [기준] 라벨 + 장소명, 다시 검색 버튼
@@ -2065,9 +1797,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     // 브랜드명에서 에셋 경로 찾기
     final brandAssetPath = BrandIconMapper.getBrandIconAsset(placeName);
     
-    // 디버깅 로그
-    debugPrint('[ResultMapScreen] 브랜드 아이콘 매칭: placeName="$placeName", assetPath=$brandAssetPath');
-    
     return ClipOval(
       child: Container(
         width: size,
@@ -2082,7 +1811,6 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 filterQuality: FilterQuality.high, // 고화질 필터링
                 errorBuilder: (context, error, stackTrace) {
                   // 에셋 로딩 실패 시 placeholder 표시
-                  debugPrint('[ResultMapScreen] 브랜드 아이콘 에셋 로딩 실패: $brandAssetPath, error: $error');
                   return _buildPlaceholderIcon(size);
                 },
               )
