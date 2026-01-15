@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:kakao_map_sdk/kakao_map_sdk.dart';
 
 import '../../../core/constants/routes.dart';
 import '../../../core/location/location_service.dart';
@@ -99,6 +100,10 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   final _locationService = LocationService();
   final _searchController = search.SearchController(); // 디버그 모드 설정 접근용
 
+  // 지도 컨트롤러 관련
+  KakaoMapController? _mapController;
+  bool _mapReady = false;
+
   PlacesInsightResponse? _insightData;
   bool _isLoading = false;
   bool _showLongLoadingIndicator = false; // 3초 이상 로딩 시 원형 프로그레스바 표시
@@ -114,6 +119,11 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   String? _timeTabError; // TIME 탭 에러 메시지
   String? _placeTabError; // PLACE 탭 에러 메시지
   
+  // 범위 확대 상태 관리
+  int _currentSearchRadiusM = 500; // 내부 검색 반경 (500/1200/2000)
+  String _lastExpandStep = 'none'; // 'none' | 'step1' | 'step2'
+  bool _isLoadingExpand = false; // 범위 확대 중 로딩 상태
+  
   // 임시 선택 상태 관리
   ViewState _viewState = ViewState.baseSelectedView;
   PlaceWithZone? _baseSelectedPlaceWithZone; // 원래 선택된 장소 (스냅샷)
@@ -122,6 +132,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   
   // 하단 카드 접기/펼치기 상태 (기본값: 펼침)
   bool _isBottomSheetExpanded = true;
+  
+  // 하단 시트 스크롤 컨트롤러
+  final ScrollController _bottomSheetScrollController = ScrollController();
 
   @override
   void initState() {
@@ -162,6 +175,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   void dispose() {
     _animationController.dispose();
     _searchController.dispose();
+    _bottomSheetScrollController.dispose();
+    _mapController = null;
+    _mapReady = false;
     super.dispose();
   }
 
@@ -193,12 +209,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
     try {
       final location = await _locationService.getCurrentPosition();
-      final radius = _placeRadiusMode == RadiusMode.expanded ? 1000 : 500;
+      // 내부 검색 반경 사용 (UI에는 항상 1km로 표기)
       final request = PlacesInsightRequest(
         selected: _currentSelectedPlace!,
         userLat: location.latitude,
         userLng: location.longitude,
-        radiusM: radius,
+        radiusM: _currentSearchRadiusM,
         maxAlternatives: 3,
       );
 
@@ -233,14 +249,27 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               
               // PLACE 탭 상태 업데이트
               if (_selectedTab == 'place') {
+                final hadResults = alternatives.isNotEmpty;
                 if (alternatives.isEmpty) {
-                  if (_placeRadiusMode == RadiusMode.base) {
+                  if (_lastExpandStep == 'none') {
                     _placeTabState = PlaceTabState.emptyFirst;
                   } else {
                     _placeTabState = PlaceTabState.emptyExpanded;
                   }
                 } else {
                   _placeTabState = PlaceTabState.success;
+                  // 범위 확대 후 결과가 있으면 스크롤 상단으로 이동
+                  if (_lastExpandStep != 'none' && hadResults) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (_bottomSheetScrollController.hasClients) {
+                        _bottomSheetScrollController.animateTo(
+                          0,
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeOut,
+                        );
+                      }
+                    });
+                  }
                 }
               }
               
@@ -283,14 +312,38 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     }
   }
   
-  /// 반경 확장 및 재조회
+  /// 반경 확장 및 재조회 (2000m로 확장)
   Future<void> _expandRadiusAndRefetch() async {
+    if (_isLoadingExpand) return; // 중복 탭 방지
+    
     setState(() {
-      _placeRadiusMode = RadiusMode.expanded;
+      _isLoadingExpand = true;
       _placeTabState = PlaceTabState.loading;
       _placeTabError = null;
+      _currentSearchRadiusM = 2000; // 2km로 확장
+      _lastExpandStep = 'step2';
     });
-    await _loadInsight();
+    
+    try {
+      // API 호출 (2000m 반경으로 재검색)
+      await _loadInsight();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingExpand = false;
+        });
+      }
+    }
+  }
+  
+  /// 시간 바꾸기 탭으로 전환
+  void _openTimeRecommendation() {
+    setState(() {
+      _selectedTab = 'time';
+    });
+    if (_timeTabState != TimeTabState.success || _recommendTimesData == null) {
+      _loadRecommendTimes();
+    }
   }
   
   /// PLACE 탭 재시도
@@ -475,9 +528,62 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     return level == '약간 붐빔' || level == '붐빔';
   }
 
+  /// 카메라를 선택된 매장으로 이동 (padding 반영)
+  /// 해결 방침 1: padding 방식 사용 시 보정 계산을 전부 제거하고 target 좌표 그대로 센터링
+  Future<void> _centerToSelected(LatLng target) async {
+    if (!_mapReady || _mapController == null) {
+      debugPrint('[ResultMapScreen] 카메라 이동 실패: 지도가 준비되지 않음');
+      return;
+    }
+
+    final c = _mapController!;
+    debugPrint('[ResultMapScreen] moveCamera to: ${target.latitude}, ${target.longitude}');
+
+    // 상단/하단 시트가 지도 위를 덮는 높이(px)
+    final double topInset = 100.0; // 상단 카드 높이
+    final double bottomInset = _isBottomSheetExpanded 
+        ? MediaQuery.of(context).size.height * 0.6 // 펼친 상태: 화면 높이의 60%
+        : 150.0; // 접힌 상태: 대략 150px
+
+    // 혼잡도 보정: 검색 매장이 혼잡하면 extraBottomPx 추가
+    final baseZone = _baseSelectedPlaceWithZone?.zone;
+    final currentSelectedCrowdIsBusy = baseZone != null && 
+        (baseZone.crowdingLevel == '약간 붐빔' || baseZone.crowdingLevel == '붐빔');
+    final double extraBottom = currentSelectedCrowdIsBusy ? 60.0 : 0.0;
+
+    try {
+      // 카메라 이동 (target 좌표 그대로 사용)
+      debugPrint('[ResultMapScreen] 원래 위치 (target): $target');
+      debugPrint('[ResultMapScreen] topInset: $topInset, bottomInset: $bottomInset, extraBottom: $extraBottom');
+
+      final cameraUpdate = CameraUpdate.newCenterPosition(target);
+      await c.moveCamera(
+        cameraUpdate,
+        animation: const CameraAnimation(350),
+      );
+      
+      debugPrint('[ResultMapScreen] ✅ 카메라 이동 완료 (target 좌표 그대로 사용)');
+      
+      // (가능하면) 카메라 위치 확인
+      try {
+        final pos = await c.getCameraPosition();
+        debugPrint('[ResultMapScreen] camera after: ${pos.position}');
+      } catch (e) {
+        // getCameraPosition이 없는 경우 무시
+        debugPrint('[ResultMapScreen] getCameraPosition 사용 불가: $e');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('[ResultMapScreen] ❌ 카메라 이동 실패: $e');
+      debugPrint('[ResultMapScreen] 스택 트레이스: $stackTrace');
+    }
+  }
+
   /// 추천 장소 선택 시 호출
-  void _onRecommendedPlaceSelected(PlaceWithZone placeWithZone) {
+  Future<void> _onRecommendedPlaceSelected(PlaceWithZone placeWithZone) async {
     if (_insightData == null) return;
+    
+    final place = placeWithZone.place;
+    debugPrint('[ResultMapScreen] tap recommended: ${place.id}, ${place.latitude}, ${place.longitude}');
     
     // base 스냅샷이 없으면 현재 상태를 base로 저장
     if (_baseSelectedPlaceWithZone == null) {
@@ -502,6 +608,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       );
       _currentSelectedPlace = placeWithZone.place;
     });
+    
+    // 카메라 이동 호출
+    await _centerToSelected(LatLng(place.latitude, place.longitude));
     
     // 추천 매장 선택 시: 이미 있는 데이터를 사용하므로 API 호출 없음
     // TIME 탭의 경우에만 선택된 추천 매장의 시간대 정보가 필요하면 로드
@@ -581,8 +690,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _currentSelectedPlace = _baseSelectedPlaceWithZone!.place;
     });
     
-    // 원래 선택으로 복원 시 활성 탭의 데이터 재로드
-    _reloadActiveTabData();
+    // 원래 선택으로 복원 시 활성 탭의 데이터 재로드하지 않음
+    // 이미 스냅샷으로 복원했으므로 API 재호출 불필요
+    // 지도가 다시 불러와지는 것을 방지하기 위해 _reloadActiveTabData() 호출 제거
   }
 
   @override
@@ -667,14 +777,30 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             if (!_isLoading)
             MapView(
               selectedPlace: selectedPlace,
-                zoneInfo: _displayZone,
-                recommendedPlaces: recommendedPlaces,
-                topCardHeight: 100.0, // 상단 카드 높이 (대략 100px)
-                bottomCardHeight: _isBottomSheetExpanded 
-                    ? MediaQuery.of(context).size.height * 0.6 // 펼친 상태: 화면 높이의 60%
-                    : 150.0, // 접힌 상태: 선택 매장 정보 + 상태 문구 (대략 150px)
-                baseZoneInfo: _baseSelectedPlaceWithZone?.zone, // 검색 매장의 혼잡도 정보 (초기 카메라 위치 조정용)
-              )
+              zoneInfo: _displayZone,
+              recommendedPlaces: recommendedPlaces,
+              topCardHeight: 100.0, // 상단 카드 높이 (대략 100px)
+              bottomCardHeight: _isBottomSheetExpanded 
+                  ? MediaQuery.of(context).size.height * 0.6 // 펼친 상태: 화면 높이의 60%
+                  : 150.0, // 접힌 상태: 선택 매장 정보 + 상태 문구 (대략 150px)
+              baseZoneInfo: _baseSelectedPlaceWithZone?.zone, // 검색 매장의 혼잡도 정보 (초기 카메라 위치 조정용)
+              onMapControllerReady: (controller) {
+                _mapController = controller;
+                _mapReady = true;
+                debugPrint('[ResultMapScreen] ✅ 지도 컨트롤러 준비 완료');
+                
+                // 초기 진입 시 카메라 이동 (첫 프레임 이후 실행)
+                WidgetsBinding.instance.addPostFrameCallback((_) async {
+                  final sp = selectedPlace ?? _currentSelectedPlace;
+                  if (sp == null) {
+                    debugPrint('[ResultMapScreen] 초기 카메라 이동 스킵: 선택된 매장이 없음');
+                    return;
+                  }
+                  debugPrint('[ResultMapScreen] 초기 진입: 검색 매장으로 카메라 이동');
+                  await _centerToSelected(LatLng(sp.latitude, sp.longitude));
+                });
+              },
+            )
             else
               // 지도 로딩 중: 흰 화면 + 돋보기 아이콘 + 문구
               Container(
@@ -829,7 +955,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     '기준',
                     style: TextStyle(
                       fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w600,
                       color: _DesignTokens.grayText,
                     ),
                   ),
@@ -842,12 +968,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
                     color: _DesignTokens.black,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-              ],
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
             ),
+              ],
+          ),
           ),
           // Right: 다시 검색 버튼
           TextButton(
@@ -858,7 +984,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               '다시 검색',
               style: TextStyle(
                 fontSize: 16,
-                color: _DesignTokens.primary,
+                color: Color(0xFF6B7280),
               ),
             ),
           ),
@@ -942,6 +1068,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final showReturnIcon = _viewState == ViewState.tempSelectedFromRecommendation;
 
     return SingleChildScrollView(
+      controller: _bottomSheetScrollController,
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).padding.bottom,
       ),
@@ -951,19 +1078,19 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           _DesignTokens.spacing24,
           _DesignTokens.spacing20,
           _DesignTokens.spacing16,
-        ),
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-            // 0. 리턴 아이콘 (임시 선택 상태일 때만 표시)
-            if (showReturnIcon) ...[
-          Padding(
+          // 0. 리턴 아이콘 (임시 선택 상태일 때만 표시)
+          if (showReturnIcon) ...[
+            Padding(
                 padding: const EdgeInsets.only(bottom: _DesignTokens.spacing8),
-                child: _buildReturnIcon(),
-              ),
-            ],
-            
+              child: _buildReturnIcon(),
+            ),
+          ],
+          
             // Section 1: Header - 원형 아이콘 48px, storeName, badge + 접기/펼치기 버튼
             Row(
               children: [
@@ -974,7 +1101,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 if (isCrowded)
                   IconButton(
                     icon: Icon(
-                      _isBottomSheetExpanded ? Icons.expand_less : Icons.expand_more,
+                      _isBottomSheetExpanded ? Icons.expand_more : Icons.expand_less,
                       color: _DesignTokens.grayText,
                     ),
                     onPressed: () {
@@ -1004,7 +1131,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               ),
               
               // Section 4: Tab content (혼잡할 때만 표시, marginTop: 24px)
-              Padding(
+            Padding(
                 padding: const EdgeInsets.only(top: _DesignTokens.spacing24),
                 child: _buildTabContent(
                   selectedTab: _selectedTab,
@@ -1133,7 +1260,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       ),
     );
   }
-  
+
   /// Segmented control tab item
   Widget _buildSegmentedTab({
     required String label,
@@ -1145,8 +1272,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       curve: Curves.easeOut,
       child: GestureDetector(
         onTap: onTap,
-        child: Container(
-          decoration: BoxDecoration(
+      child: Container(
+        decoration: BoxDecoration(
             color: isSelected ? Colors.white : Colors.transparent,
             borderRadius: BorderRadius.circular(_DesignTokens.radius8),
             boxShadow: isSelected
@@ -1270,7 +1397,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         children: [
         const Text(
           '이때 오면 여유로워요',
-          style: TextStyle(
+            style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
@@ -1284,9 +1411,9 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           style: TextStyle(
             fontSize: 13,
             color: _DesignTokens.grayText,
+            ),
           ),
-        ),
-      ],
+        ],
     );
   }
   
@@ -1311,7 +1438,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       ],
     );
   }
-  
+
   /// TIME 탭 에러 상태
   Widget _buildTimeTabError() {
     return Column(
@@ -1398,7 +1525,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ),
         const SizedBox(width: _DesignTokens.spacing12),
         // Time range (flex: 1)
-          Expanded(
+        Expanded(
           child: Text(
             timeRange,
             style: const TextStyle(
@@ -1410,8 +1537,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         // Relative time
         Text(
           relativeTime,
-          style: const TextStyle(
-            fontSize: 14,
+            style: const TextStyle(
+              fontSize: 14,
             color: _DesignTokens.grayText,
           ),
         ),
@@ -1501,10 +1628,10 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
           child: Row(
                   children: [
-                    Container(
+        Container(
                 width: 44,
                 height: 44,
-                      decoration: BoxDecoration(
+          decoration: BoxDecoration(
                   color: Colors.grey[300],
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -1542,7 +1669,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       ],
     );
   }
-  
+
   /// PLACE 탭 성공 상태
   Widget _buildPlaceTabSuccess(ZoneInfo zone, List<PlaceWithZone> recommendedPlaces) {
     final headerText = _getPlaceTabHeaderText(zone);
@@ -1571,35 +1698,56 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   
   /// PLACE 탭 첫 번째 빈 상태 (기본 반경)
   Widget _buildPlaceTabEmptyFirst(ZoneInfo zone) {
-    final headerText = _getPlaceTabHeaderText(zone);
+    // 선택적 힌트: 혼잡도 분산이 낮을 때만 표시
+    final showTimeHint = _shouldShowTimeHint();
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          headerText,
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
+        // Title
+        const Text(
+          '지금은 약간 붐비는 편이에요',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
             color: _DesignTokens.black,
           ),
         ),
-        const SizedBox(height: _DesignTokens.spacing24),
-        _buildEmptyState(
-          title: '가까운 범위에는 여유로운 곳이 없어요',
-          body: '조금 더 넓게 찾아볼까요?',
-          actionButton: ElevatedButton(
-            onPressed: _expandRadiusAndRefetch,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _DesignTokens.primary,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: const Text('범위 넓혀서 찾기'),
+        const SizedBox(height: 8),
+        // Description
+        const Text(
+          '주변 1km 내 카페는 혼잡도가 비슷해요',
+          style: TextStyle(
+            fontSize: 14,
+            color: _DesignTokens.grayText,
           ),
+        ),
+        // Optional hint
+        if (showTimeHint) ...[
+          const SizedBox(height: 12),
+          const Text(
+            '지금은 시간대를 바꾸는 것이 더 효과적일 수 있어요',
+            style: TextStyle(
+              fontSize: 13,
+              color: _DesignTokens.grayTextTertiary,
+            ),
+          ),
+        ],
+        const SizedBox(height: 20),
+        // Action buttons
+        _buildActionButton(
+          label: '시간 바꾸기',
+          subLabel: '더 여유로운 시간대를 추천해드릴게요',
+          onPressed: _isLoadingExpand ? null : _openTimeRecommendation,
+          isPrimary: true,
+        ),
+        const SizedBox(height: 12),
+        _buildActionButton(
+          label: '범위 넓혀서 찾기',
+          subLabel: '주변 2km까지 확대됩니다',
+          onPressed: _isLoadingExpand ? null : _expandRadiusAndRefetch,
+          isPrimary: false,
+          isLoading: _isLoadingExpand,
         ),
       ],
     );
@@ -1607,50 +1755,151 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   
   /// PLACE 탭 확장 후 빈 상태
   Widget _buildPlaceTabEmptyExpanded(ZoneInfo zone) {
-    final headerText = _getPlaceTabHeaderText(zone);
-    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          headerText,
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
+        // Title
+        const Text(
+          '지금은 약간 붐비는 편이에요',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
             color: _DesignTokens.black,
           ),
         ),
-        const SizedBox(height: _DesignTokens.spacing24),
-        _buildEmptyState(
-          title: '지금은 주변 대부분이 붐비는 상태예요',
-          body: "'시간 바꾸기'에서 한산한 시간대를 확인해보세요",
+        const SizedBox(height: 8),
+        // Description (확장 후에는 미세 강화)
+        const Text(
+          '주변 2km 내에서도 혼잡도가 비슷해요',
+          style: TextStyle(
+            fontSize: 14,
+            color: _DesignTokens.grayText,
+          ),
+        ),
+        const SizedBox(height: 20),
+        // Action buttons
+        _buildActionButton(
+          label: '시간 바꾸기',
+          subLabel: '더 여유로운 시간대를 추천해드릴게요',
+          onPressed: _isLoadingExpand ? null : _openTimeRecommendation,
+          isPrimary: true,
         ),
       ],
     );
   }
   
+  /// 선택적 힌트 표시 여부 결정 (혼잡도 분산 기반)
+  bool _shouldShowTimeHint() {
+    // TODO: 혼잡도 분산 계산 로직 구현
+    // 현재는 간단히 항상 false로 설정 (나중에 구현)
+    // 탐색 반경 내 후보들의 혼잡도 점수 표준편차가 임계값 이하일 때만 true
+    return false;
+  }
+  
+  /// 액션 버튼 빌더 (라벨 + 보조 텍스트)
+  Widget _buildActionButton({
+    required String label,
+    required String subLabel,
+    required VoidCallback? onPressed,
+    required bool isPrimary,
+    bool isLoading = false,
+  }) {
+    if (isPrimary) {
+      // 시간 바꾸기: 중성 배경 버튼 (연한 회색/웜 화이트 배경, 다크 그레이 텍스트)
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ElevatedButton(
+            onPressed: onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFF0EBEB), // R240 G235 B235
+              foregroundColor: const Color(0xFF1A1A1A), // 거의 블랙에 가까운 다크 그레이
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              elevation: 0,
+            ),
+            child: isLoading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A1A1A)),
+                    ),
+                  )
+                : Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subLabel,
+            style: const TextStyle(
+              fontSize: 12,
+              color: _DesignTokens.grayTextTertiary,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    } else {
+      // 범위 넓혀서 찾기: 배경 없는 텍스트 버튼 (더 차분하게)
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextButton(
+            onPressed: onPressed,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF1A1A1A), // 다크 그레이
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), // 시간 바꾸기보다 작게
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: isLoading
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A1A1A)),
+                    ),
+                  )
+                : Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 14, // 시간 바꾸기보다 작게
+                      fontWeight: FontWeight.w500, // 시간 바꾸기보다 약하게
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subLabel,
+            style: const TextStyle(
+              fontSize: 12,
+              color: _DesignTokens.grayTextTertiary,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    }
+  }
+  
   /// PLACE 탭 에러 상태
   Widget _buildPlaceTabError(ZoneInfo zone) {
-    final headerText = _getPlaceTabHeaderText(zone);
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          headerText,
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: _DesignTokens.black,
-          ),
-        ),
-        const SizedBox(height: _DesignTokens.spacing24),
-        _buildErrorState(
-          title: '근처 장소 정보를 불러오지 못했어요',
-          body: '잠시 후 다시 시도해 주세요',
-          onRetry: _retryPlace,
-        ),
-      ],
+    return _buildErrorState(
+      title: '근처 장소 정보를 불러오지 못했어요',
+      body: '잠시 후 다시 시도해 주세요',
+      onRetry: _retryPlace,
+      centerAlign: true,
     );
   }
   
@@ -1659,12 +1908,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     required String title,
     required String body,
     Widget? actionButton,
+    bool centerAlign = false,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final content = Column(
+      crossAxisAlignment: centerAlign ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+      mainAxisAlignment: centerAlign ? MainAxisAlignment.center : MainAxisAlignment.start,
       children: [
         Text(
           title,
+          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
           style: const TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w600,
@@ -1674,6 +1926,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const SizedBox(height: 8),
         Text(
           body,
+          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
           style: const TextStyle(
             fontSize: 14,
             color: _DesignTokens.grayText,
@@ -1685,6 +1938,16 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ],
       ],
     );
+
+    // 중앙 정렬일 때 전체 너비를 사용하도록 SizedBox로 감싸기
+    if (centerAlign) {
+      return SizedBox(
+        width: double.infinity,
+        child: content,
+      );
+    }
+
+    return content;
   }
   
   /// 에러 상태 공통 UI
@@ -1692,12 +1955,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     required String title,
     required String body,
     required VoidCallback onRetry,
+    bool centerAlign = false,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final content = Column(
+      crossAxisAlignment: centerAlign ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+      mainAxisAlignment: centerAlign ? MainAxisAlignment.center : MainAxisAlignment.start,
       children: [
         Text(
           title,
+          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
           style: const TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w600,
@@ -1707,6 +1973,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const SizedBox(height: 8),
         Text(
           body,
+          textAlign: centerAlign ? TextAlign.center : TextAlign.start,
           style: const TextStyle(
             fontSize: 14,
             color: _DesignTokens.grayText,
@@ -1727,6 +1994,16 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ),
       ],
     );
+
+    // 중앙 정렬일 때 전체 너비를 사용하도록 SizedBox로 감싸기
+    if (centerAlign) {
+      return SizedBox(
+        width: double.infinity,
+        child: content,
+      );
+    }
+
+    return content;
   }
   
   /// Build place card
@@ -1781,7 +2058,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                   ),
                   const SizedBox(height: 4),
                   // Info (congestionLevel • distance)
-                  Text(
+                        Text(
                     '${zone.crowdingLevel} • $distanceText',
                     style: const TextStyle(
                       fontSize: 13,

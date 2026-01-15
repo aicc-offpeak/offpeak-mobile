@@ -24,6 +24,7 @@ class MapView extends StatefulWidget {
   final double? topCardHeight; // 상단 카드 높이 (픽셀)
   final double? bottomCardHeight; // 하단 카드 높이 (픽셀)
   final ZoneInfo? baseZoneInfo; // 검색 매장의 혼잡도 정보 (초기 카메라 위치 조정용)
+  final Function(KakaoMapController)? onMapControllerReady; // 지도 컨트롤러 준비 완료 콜백
 
   const MapView({
     super.key,
@@ -33,6 +34,7 @@ class MapView extends StatefulWidget {
     this.topCardHeight,
     this.bottomCardHeight,
     this.baseZoneInfo,
+    this.onMapControllerReady,
   });
 
   @override
@@ -304,9 +306,13 @@ class _MapViewState extends State<MapView> {
         _moveCameraToMarker(isInitialLoad: false);
       }
       // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
+      // 선택 마커를 항상 마지막에 추가하여 최상단 렌더링 보장
       _updateRecommendedPlacesPoi().then((_) {
-        // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가
+        // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가 (마지막에 추가 = 최상단)
+        debugPrint('[MapView] 추천 장소 POI 추가 완료, 선택 매장 POI 추가 시작 (최상단 렌더링 보장)');
         return _updateSelectedPlacePoi();
+      }).then((_) {
+        debugPrint('[MapView] ✅ 선택 매장 POI 추가 완료 (최상단 렌더링)');
       }).catchError((e) {
         debugPrint('[MapView] POI 업데이트 에러 (didUpdateWidget): $e');
       });
@@ -359,15 +365,24 @@ class _MapViewState extends State<MapView> {
 
         debugPrint('[MapView] 상태 업데이트 완료: _isMapReady=$_isMapReady, _controller=${_controller != null}');
         debugPrint('[MapView] recommendedPlaces: ${widget.recommendedPlaces?.length ?? 0}개');
+        
+        // 외부에 controller 노출
+        if (widget.onMapControllerReady != null) {
+          widget.onMapControllerReady!(controller);
+        }
 
         // 지도 준비 완료 후 카메라 이동 및 POI 추가 (초기 로드)
         _moveCameraToMarker(isInitialLoad: true);
         _isInitialLoad = false; // 초기 로드 완료
         debugPrint('[MapView] POI 추가 시작');
         // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
+        // 선택 마커를 항상 마지막에 추가하여 최상단 렌더링 보장
         _updateRecommendedPlacesPoi().then((_) {
-          // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가
+          // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가 (마지막에 추가 = 최상단)
+          debugPrint('[MapView] 추천 장소 POI 추가 완료, 선택 매장 POI 추가 시작 (최상단 렌더링 보장)');
           return _updateSelectedPlacePoi();
+        }).then((_) {
+          debugPrint('[MapView] ✅ 선택 매장 POI 추가 완료 (최상단 렌더링)');
         }).catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
         });
