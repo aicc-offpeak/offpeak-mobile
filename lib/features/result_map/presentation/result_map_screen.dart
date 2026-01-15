@@ -241,7 +241,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               });
             } else {
               // API 실패 시 디버깅 모드로 전환 (초기 로드 시에만)
-              _loadDebugModeData();
+            _loadDebugModeData();
             }
         }
       }
@@ -254,7 +254,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           });
         } else {
           // 예외 발생 시 디버깅 모드로 전환 (초기 로드 시에만)
-          _loadDebugModeData();
+        _loadDebugModeData();
         }
       }
     }
@@ -395,7 +395,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final currentSelectedPlace = _insightData?.selected.place ?? _currentSelectedPlace!;
     final isBaseSelected = _baseSelectedPlaceWithZone != null && 
                           currentSelectedPlace.id == basePlace.id;
-    
+
     final debugData = PlacesInsightResponse(
       selected: PlaceWithZone(
         place: currentSelectedPlace,
@@ -492,14 +492,14 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _loadRecommendTimes();
     } else if (_selectedTab == 'place') {
       // 반경 모드 초기화하지 않고 현재 모드 유지
-      _loadInsight();
+    _loadInsight();
     }
   }
 
   /// 추천 시간대 데이터 로드
   Future<void> _loadRecommendTimes() async {
     if (_currentSelectedPlace == null) return;
-    
+
     setState(() {
       _timeTabState = TimeTabState.loading;
       _timeTabError = null;
@@ -642,8 +642,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             // 지도는 전체 화면에 표시
             // API 응답이 있으면 zoneInfo 전달 (없으면 null로 회색 마커 표시)
             if (!_isLoading)
-              MapView(
-                selectedPlace: selectedPlace,
+            MapView(
+              selectedPlace: selectedPlace,
                 zoneInfo: _displayZone,
                 recommendedPlaces: recommendedPlaces,
                 topCardHeight: 100.0, // 상단 카드 높이 (대략 100px)
@@ -718,7 +718,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     ),
                   ),
                 ],
-              ),
+            ),
             // 상단 섹션: 항상 표시
             if (selectedPlace != null)
               Positioned(
@@ -772,7 +772,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Left: 브랜드 아이콘 (원형, #FFD700 배경)
-          _buildBrandIconWithBg(placeName, size: 40),
+          _buildBrandIconWithBg(
+            placeName, 
+            size: 40,
+            category: selectedPlace.category,
+            categoryGroupCode: selectedPlace.categoryGroupCode,
+          ),
           const SizedBox(width: _DesignTokens.spacing12),
           // Center: [기준] 라벨 (위) + 장소명 (아래)
           Expanded(
@@ -787,15 +792,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     color: _DesignTokens.grayBg,
                     borderRadius: BorderRadius.circular(4),
                   ),
-                  child: const Text(
+            child: const Text(
                     '기준',
-                    style: TextStyle(
+              style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       color: _DesignTokens.grayText,
-                    ),
-                  ),
-                ),
+              ),
+            ),
+          ),
                 const SizedBox(height: 4),
                 // 장소명
                 Text(
@@ -809,28 +814,28 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                   maxLines: 1,
                 ),
               ],
-            ),
+              ),
           ),
           // Right: 다시 검색 버튼
-          TextButton(
-            onPressed: () {
-              Navigator.pushReplacementNamed(context, Routes.search);
-            },
-            child: const Text(
+              TextButton(
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, Routes.search);
+                },
+                child: const Text(
               '다시 검색',
-              style: TextStyle(
-                fontSize: 16,
+                  style: TextStyle(
+                    fontSize: 16,
                 color: _DesignTokens.primary,
+                  ),
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
       ),
     );
   }
   
   /// 브랜드 아이콘 with 배경 (#FFD700)
-  Widget _buildBrandIconWithBg(String? placeName, {double size = 40}) {
+  Widget _buildBrandIconWithBg(String? placeName, {double size = 40, String? category, String? categoryGroupCode}) {
     // 브랜드명에서 에셋 경로 찾기
     final brandAssetPath = BrandIconMapper.getBrandIconAsset(placeName);
     
@@ -850,11 +855,11 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 fit: BoxFit.cover,
                 filterQuality: FilterQuality.high,
                 errorBuilder: (context, error, stackTrace) {
-                  return _buildPlaceholderIcon(size);
+                  return _buildPlaceholderIcon(size, category: category, categoryGroupCode: categoryGroupCode);
                 },
               ),
             )
-          : _buildPlaceholderIcon(size),
+          : _buildPlaceholderIcon(size, category: category, categoryGroupCode: categoryGroupCode),
     );
   }
 
@@ -914,13 +919,13 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           _DesignTokens.spacing16,
           _DesignTokens.spacing16,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
             // 0. 리턴 아이콘 (임시 선택 상태일 때만 표시)
             if (showReturnIcon) ...[
-              Padding(
+          Padding(
                 padding: const EdgeInsets.only(bottom: _DesignTokens.spacing8),
                 child: _buildReturnIcon(),
               ),
@@ -949,7 +954,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             ),
             
             // Section 2: Status text - "지금은 {혼잡도} 편이에요" (항상 표시)
-            Padding(
+          Padding(
               padding: const EdgeInsets.only(top: _DesignTokens.spacing16),
               child: _buildStatusText(zone.crowdingLevel),
             ),
@@ -957,7 +962,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
             // 펼친 상태일 때만 탭과 탭 콘텐츠 표시
             if (_isBottomSheetExpanded && isCrowded) ...[
               // Section 3: Segmented control tabs (혼잡할 때만 표시)
-              Padding(
+            Padding(
                 padding: const EdgeInsets.only(top: _DesignTokens.spacing16),
                 child: _buildSegmentedControl(
                   selectedTab: _selectedTab,
@@ -973,27 +978,32 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                   placeWithZone: placeWithZone,
                   zone: zone,
                   recommendedPlaces: recommendedPlaces,
-                ),
               ),
-            ],
+            ),
           ],
+        ],
         ),
       ),
     );
   }
-  
+
   /// Section 1: Bottom sheet header - 원형 아이콘 48px, storeName, badge
   Widget _buildBottomSheetHeader(Place place, ZoneInfo zone) {
     return Row(
       children: [
         // 원형 아이콘 48px
-        _buildBrandIconWithBg(place.name, size: 48),
+        _buildBrandIconWithBg(
+          place.name, 
+          size: 48,
+          category: place.category,
+          categoryGroupCode: place.categoryGroupCode,
+        ),
         const SizedBox(width: _DesignTokens.spacing12),
         // storeName (18px, fontWeight 700)
         Expanded(
           child: Text(
             place.name,
-            style: const TextStyle(
+          style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
               color: _DesignTokens.black,
@@ -1025,7 +1035,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       ),
       child: Text(
         crowdingLevel.isNotEmpty ? crowdingLevel : '여유',
-        style: TextStyle(
+              style: TextStyle(
           fontSize: 13,
           color: badgeConfig['text'],
           fontWeight: FontWeight.w600,
@@ -1105,11 +1115,11 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           borderRadius: BorderRadius.circular(_DesignTokens.radius8),
           boxShadow: isSelected
               ? [
-                  BoxShadow(
+          BoxShadow(
                     color: Colors.black.withOpacity(0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
                 ]
               : null,
         ),
@@ -1173,7 +1183,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         // 스켈레톤 (3개)
         ...List.generate(3, (index) => Padding(
           padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
-          child: Row(
+      child: Row(
             children: [
               SizedBox(
                 width: 60,
@@ -1216,8 +1226,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   /// TIME 탭 성공 상태
   Widget _buildTimeTabSuccess() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
         const Text(
           '이때 오면 여유로워요',
           style: TextStyle(
@@ -1348,7 +1358,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ),
         const SizedBox(width: _DesignTokens.spacing12),
         // Time range (flex: 1)
-        Expanded(
+          Expanded(
           child: Text(
             timeRange,
             style: const TextStyle(
@@ -1435,11 +1445,11 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final headerText = _getPlaceTabHeaderText(zone);
     
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
           headerText,
-          style: const TextStyle(
+                  style: const TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
             color: _DesignTokens.black,
@@ -1450,11 +1460,11 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ...List.generate(3, (index) => Padding(
           padding: const EdgeInsets.only(bottom: _DesignTokens.spacing12),
           child: Row(
-            children: [
-              Container(
+                  children: [
+                    Container(
                 width: 44,
                 height: 44,
-                decoration: BoxDecoration(
+                      decoration: BoxDecoration(
                   color: Colors.grey[300],
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -1479,10 +1489,10 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                       decoration: BoxDecoration(
                         color: Colors.grey[300],
                         borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
               ),
               const SizedBox(width: _DesignTokens.spacing12),
               Icon(Icons.chevron_right, color: Colors.grey[400], size: 24),
@@ -1684,7 +1694,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     final place = placeWithZone.place;
     final zone = placeWithZone.zone;
     final distanceText = _formatDistance(place.distanceM);
-    
+
     return InkWell(
       onTap: () => _onRecommendedPlaceSelected(placeWithZone),
       borderRadius: BorderRadius.circular(_DesignTokens.radius12),
@@ -1698,7 +1708,12 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // Icon (44px 원형)
-            _buildBrandIcon(place.name, size: 44),
+            _buildBrandIcon(
+              place.name, 
+              size: 44,
+              category: place.category,
+              categoryGroupCode: place.categoryGroupCode,
+            ),
             const SizedBox(width: _DesignTokens.spacing12),
             // Text container (flex: 1)
             Expanded(
@@ -1769,18 +1784,18 @@ class _ResultMapScreenState extends State<ResultMapScreen>
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
             const Icon(
               Icons.chevron_left,
               color: Colors.black87,
               size: 20,
             ),
-            const SizedBox(width: 4),
+                            const SizedBox(width: 4),
             const Text(
               '목록으로 돌아가기',
-              style: TextStyle(
-                fontSize: 14,
+                              style: TextStyle(
+                                fontSize: 14,
                 color: Colors.black87,
                 fontWeight: FontWeight.w500,
               ),
@@ -1793,7 +1808,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
 
   /// 브랜드 아이콘 빌더 (원형)
   /// 브랜드명을 기반으로 에셋 이미지 사용
-  Widget _buildBrandIcon(String? placeName, {double size = 48}) {
+  Widget _buildBrandIcon(String? placeName, {double size = 48, String? category, String? categoryGroupCode}) {
     // 브랜드명에서 에셋 경로 찾기
     final brandAssetPath = BrandIconMapper.getBrandIconAsset(placeName);
     
@@ -1811,16 +1826,44 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 filterQuality: FilterQuality.high, // 고화질 필터링
                 errorBuilder: (context, error, stackTrace) {
                   // 에셋 로딩 실패 시 placeholder 표시
-                  return _buildPlaceholderIcon(size);
+                  return _buildPlaceholderIcon(size, category: category, categoryGroupCode: categoryGroupCode);
                 },
               )
-            : _buildPlaceholderIcon(size),
+            : _buildPlaceholderIcon(size, category: category, categoryGroupCode: categoryGroupCode),
       ),
     );
   }
 
-  /// Placeholder 아이콘
-  Widget _buildPlaceholderIcon(double size) {
+  /// Placeholder 아이콘 (카테고리에 따라 다른 이미지 사용)
+  Widget _buildPlaceholderIcon(double size, {String? category, String? categoryGroupCode}) {
+    // 카테고리 판단: 카페인지 음식점인지 확인
+    final isCafe = categoryGroupCode == 'CE7' || 
+                   (category != null && (category.contains('카페') || category.contains('커피')));
+    final isRestaurant = categoryGroupCode == 'FD6' || 
+                        (category != null && (category.contains('음식') || category.contains('식당')));
+    
+    String placeholderAsset;
+    if (isCafe) {
+      placeholderAsset = 'assets/brands/placeholder_cafe.png';
+    } else if (isRestaurant) {
+      placeholderAsset = 'assets/brands/placeholder_meal.png';
+    } else {
+      // 기본값: 카페로 처리
+      placeholderAsset = 'assets/brands/placeholder_cafe.png';
+    }
+    
+    return ClipOval(
+      child: Container(
+        width: size,
+        height: size,
+        color: Colors.grey[200],
+        child: Image.asset(
+          placeholderAsset,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            // placeholder 이미지도 로딩 실패 시 기본 아이콘 표시
     return Container(
       width: size,
       height: size,
@@ -1829,6 +1872,10 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         Icons.store,
         size: size * 0.5,
         color: Colors.grey[400],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
