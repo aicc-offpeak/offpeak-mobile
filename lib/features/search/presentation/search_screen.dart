@@ -45,20 +45,36 @@ class _SearchScreenState extends State<SearchScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 검색창
+            // 검색창과 디버그 버튼
             Padding(
               padding: const EdgeInsets.all(16.0),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: '가게 검색',
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: '가게 검색',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8.0),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                      ),
+                    ),
                   ),
-                  filled: true,
-                  fillColor: Colors.grey[100],
-                ),
+                  const SizedBox(width: 8),
+                  // 디버그 버튼
+                  IconButton(
+                    icon: Icon(
+                      Icons.bug_report,
+                      color: controller.useDebugMode ? Colors.orange : Colors.grey,
+                    ),
+                    onPressed: () => _showDebugDialog(context),
+                    tooltip: '디버그 모드',
+                  ),
+                ],
               ),
             ),
             // 위치 정보 로딩 중일 때 표시
@@ -187,6 +203,100 @@ class _SearchScreenState extends State<SearchScreen> {
             },
           );
         },
+      ),
+    );
+  }
+
+  void _showDebugDialog(BuildContext context) {
+    final crowdingLevels = ['여유', '보통', '약간 붐빔', '붐빔'];
+    String? selectedLevel = controller.debugCrowdingLevel;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('디버그 모드 설정'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 실제 API 사용 / 고정값 강제 선택
+              Row(
+                children: [
+                  Radio<bool>(
+                    value: false,
+                    groupValue: controller.useDebugMode,
+                    onChanged: (value) {
+                      if (value != null) {
+                        if (!value) {
+                          controller.setDebugCrowdingLevel(null);
+                        }
+                        controller.toggleDebugMode();
+                        setDialogState(() {});
+                      }
+                    },
+                  ),
+                  const Text('실제 API 값 사용'),
+                ],
+              ),
+              Row(
+                children: [
+                  Radio<bool>(
+                    value: true,
+                    groupValue: controller.useDebugMode,
+                    onChanged: (value) {
+                      if (value != null && value) {
+                        controller.toggleDebugMode();
+                        if (selectedLevel == null) {
+                          selectedLevel = '여유';
+                          controller.setDebugCrowdingLevel(selectedLevel);
+                        }
+                        setDialogState(() {});
+                      }
+                    },
+                  ),
+                  const Text('고정값으로 강제'),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // 고정값 선택 (디버그 모드가 활성화된 경우만)
+              if (controller.useDebugMode) ...[
+                const Text(
+                  '혼잡도 고정값 선택:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                ...crowdingLevels.map((level) => RadioListTile<String>(
+                      title: Text(level),
+                      value: level,
+                      groupValue: selectedLevel,
+                      onChanged: (value) {
+                        if (value != null) {
+                          selectedLevel = value;
+                          controller.setDebugCrowdingLevel(value);
+                          setDialogState(() {});
+                        }
+                      },
+                    )),
+                const SizedBox(height: 8),
+                Text(
+                  '※ 붐빔/약간 붐빔 선택 시 추천 매장 API는 호출됩니다',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('닫기'),
+            ),
+          ],
+        ),
       ),
     );
   }

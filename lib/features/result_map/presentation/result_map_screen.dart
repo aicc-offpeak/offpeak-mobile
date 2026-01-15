@@ -12,6 +12,7 @@ import '../../../data/models/recommend_times_response.dart';
 import '../../../data/models/zone_info.dart';
 import '../../../data/repositories/insight_repository.dart';
 import '../../../data/repositories/recommend_times_repository.dart';
+import '../../search/state/search_controller.dart' as search;
 import '../widgets/map_view.dart';
 
 /// Design tokens for the result map screen
@@ -30,7 +31,7 @@ class _DesignTokens {
   
   // Badge colors
   static const Map<String, Map<String, Color>> badgeColors = {
-    '여유': {'bg': Color(0xFFC8E6C9), 'text': Color(0xFF1B5E20)}, // 더 진하게
+    '여유': {'bg': Color(0xFFD0F6B9), 'text': Color(0xFE1C9E40)}, 
     '보통': {'bg': Color(0xFFFFE894), 'text': Color(0xFFF59C00)}, // 원래대로 복구
     '약간 붐빔': {'bg': Color(0xFFFFF3E0), 'text': Color(0xFFFF6B35)},
     '붐빔': {'bg': Color(0xFFFFEBEE), 'text': Color(0xFFD32F2F)},
@@ -96,6 +97,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   final _insightRepository = InsightRepository();
   final _recommendTimesRepository = RecommendTimesRepository();
   final _locationService = LocationService();
+  final _searchController = search.SearchController(); // 디버그 모드 설정 접근용
 
   PlacesInsightResponse? _insightData;
   bool _isLoading = false;
@@ -159,6 +161,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   @override
   void dispose() {
     _animationController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -204,11 +207,27 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       if (mounted) {
         switch (result) {
           case ApiSuccess<PlacesInsightResponse>():
-            final isCongested = result.data.selected.zone.isCongested;
-            final alternatives = result.data.alternatives;
+            var insightData = result.data;
+            final alternatives = insightData.alternatives;
+            
+            // 디버그 모드가 활성화되어 있고 고정값이 설정되어 있으면 혼잡도 덮어쓰기
+            if (_searchController.useDebugMode && _searchController.debugCrowdingLevel != null) {
+              final debugLevel = _searchController.debugCrowdingLevel!;
+              // 검색 매장의 혼잡도만 고정값으로 변경
+              final updatedSelected = PlaceWithZone(
+                place: insightData.selected.place,
+                zone: insightData.selected.zone.copyWithCrowdingLevel(debugLevel),
+              );
+              insightData = PlacesInsightResponse(
+                selected: updatedSelected,
+                alternatives: alternatives,
+              );
+            }
+            
+            final isCongested = insightData.selected.zone.isCongested;
             
             setState(() {
-              _insightData = result.data;
+              _insightData = insightData;
               _isLoading = false;
               _showLongLoadingIndicator = false;
               
@@ -227,7 +246,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               
               // 검색 매장과 추천 매장 스냅샷 캡처 (한 번만, API 성공 시)
               if (_baseSelectedPlaceWithZone == null) {
-                _baseSelectedPlaceWithZone = result.data.selected;
+                _baseSelectedPlaceWithZone = insightData.selected;
                 _baseRecommendations = List.from(alternatives);
               }
             });
@@ -1088,7 +1107,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   }) {
     return Container(
       width: double.infinity,
-      height: 44,
+      height: 48, // 높이를 44에서 48로 증가하여 텍스트가 잘리지 않도록
       decoration: BoxDecoration(
         color: _DesignTokens.grayBg,
         borderRadius: BorderRadius.circular(_DesignTokens.radius12),
@@ -1141,7 +1160,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 : null,
           ),
           alignment: Alignment.center,
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8), // vertical을 12에서 10으로 줄이고 horizontal 추가
           child: Text(
             label,
             style: TextStyle(
@@ -1149,6 +1168,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
               color: isSelected ? _DesignTokens.black : _DesignTokens.grayText,
             ),
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.visible, // 텍스트가 잘리지 않도록
           ),
         ),
       ),

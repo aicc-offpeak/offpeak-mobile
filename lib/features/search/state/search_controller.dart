@@ -27,6 +27,28 @@ class SearchController extends ChangeNotifier {
   LocationData? _cachedLocation;
   Future<void>? _locationInitializationFuture; // 위치 초기화 Future 캐싱
 
+  // 디버그 모드 상태 (정적 변수로 모든 인스턴스가 공유)
+  static bool _useDebugMode = false; // true: 고정값 사용, false: 실제 API 값 사용
+  static String? _debugCrowdingLevel; // 고정값으로 사용할 혼잡도 레벨 (null이면 실제 API 값 사용)
+  
+  bool get useDebugMode => _useDebugMode;
+  String? get debugCrowdingLevel => _debugCrowdingLevel;
+  
+  /// 디버그 모드 토글
+  void toggleDebugMode() {
+    _useDebugMode = !_useDebugMode;
+    if (!_useDebugMode) {
+      _debugCrowdingLevel = null;
+    }
+    notifyListeners();
+  }
+  
+  /// 디버그 모드에서 사용할 혼잡도 레벨 설정
+  void setDebugCrowdingLevel(String? level) {
+    _debugCrowdingLevel = level;
+    notifyListeners();
+  }
+
   void loadRecent() {
     recentKeywords = _repository.getRecentKeywords();
     notifyListeners();
