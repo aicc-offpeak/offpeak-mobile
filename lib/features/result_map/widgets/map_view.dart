@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:kakao_map_sdk/kakao_map_sdk.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
@@ -19,13 +20,19 @@ import '../../../data/models/zone_info.dart';
 class MapView extends StatefulWidget {
   final Place? selectedPlace;
   final ZoneInfo? zoneInfo;
-  final List<Place>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시)
+  final List<PlaceWithZone>? recommendedPlaces; // 추천 장소 목록 (혼잡 시 표시, zoneInfo 포함)
+  final double? topCardHeight; // 상단 카드 높이 (픽셀)
+  final double? bottomCardHeight; // 하단 카드 높이 (픽셀)
+  final ZoneInfo? baseZoneInfo; // 검색 매장의 혼잡도 정보 (초기 카메라 위치 조정용)
 
   const MapView({
     super.key,
     this.selectedPlace,
     this.zoneInfo,
     this.recommendedPlaces,
+    this.topCardHeight,
+    this.bottomCardHeight,
+    this.baseZoneInfo,
   });
 
   @override
@@ -43,13 +50,22 @@ class _MapViewState extends State<MapView> {
   StreamSubscription<LocationData>? _locationSubscription;
   LatLng? _lastUserLocationPoiPosition; // 마지막으로 POI를 생성한 위치 (throttle용)
   DateTime? _lastUserLocationUpdateTime; // 마지막 업데이트 시간 (throttle용)
+  bool _isInitialLoad = true; // 초기 로드 여부 (검색 매장 혼잡도 기반 위치 조정용)
+  
+  // 동심원 가이드 관련
+  // 플러그인 코드 수정 후 _controller를 통해 메서드 호출
+  LatLng? _lastRingsUpdatePosition; // 마지막으로 동심원을 업데이트한 위치 (throttle용)
+  DateTime? _lastRingsUpdateTime; // 마지막 동심원 업데이트 시간 (throttle용)
+  double _currentZoomLevel = 16.0; // 현재 줌 레벨
+  bool _ringsInitialized = false; // 동심원 초기화 여부
 
   static const _zoomLevel = 16;
   
-  // 마커 이미지 크기 (가로 2: 세로 3 비율, 원본 크기의 1/3)
-  // 2:3 비율: 28x42 (원본 84x126의 1/3)
-  static const double _markerWidth = 28.0;   // 2:3 비율의 가로
-  static const double _markerHeight = 42.0;  // 2:3 비율의 세로
+  // 마커 이미지 크기 (가로 2: 세로 3 비율)
+  // 기본 크기를 선택 매장 기준으로 설정 (기존 기본의 75%)
+  // 2:3 비율: 21x32 (기존 28x42의 75%, 21 * 1.5 = 31.5 → 32로 반올림)
+  static const double _markerWidth = 21.0;   // 2:3 비율의 가로 (기본 크기)
+  static const double _markerHeight = 32.0;  // 2:3 비율의 세로 (기본 크기)
   
   // 사용자 위치 마커 크기 (원래 크기의 1/3)
   static const int _userLocationMarkerSize = 13;
@@ -58,11 +74,36 @@ class _MapViewState extends State<MapView> {
   final Map<String, String> _brandIconCache = {};
   final Dio _dio = Dio();
 
-  /// 혼잡도에 따라 마커 이미지 경로 반환
+  /// 혼잡도에 따라 선택 매장 마커 이미지 경로 반환
   /// zoneInfo가 null이면 회색 마커 (API 실패 또는 정보 없음)
-  String _getMarkerImagePath(ZoneInfo? zoneInfo) {
+  /// 주의: KakaoMap SDK는 하위 폴더를 지원하지 않을 수 있으므로 icons/ 직하위에 파일명으로 구분
+  String _getSelectedMarkerImagePath(ZoneInfo? zoneInfo) {
     if (zoneInfo == null || zoneInfo.crowdingLevel.isEmpty) {
-      return 'assets/icons/marker_grey.png';
+      return 'assets/icons/marker_selected_grey.png'; // 정보 없음
+    }
+
+    final crowdingLevel = zoneInfo.crowdingLevel;
+    
+    if (crowdingLevel == '여유' || crowdingLevel == '원활') {
+      return 'assets/icons/marker_selected_green.png';
+    } else if (crowdingLevel == '보통') {
+      return 'assets/icons/marker_selected_yellow.png';
+    } else if (crowdingLevel == '약간 붐빔') {
+      return 'assets/icons/marker_selected_orange.png';
+    } else if (crowdingLevel == '붐빔') {
+      return 'assets/icons/marker_selected_red.png';
+    }
+    
+    return 'assets/icons/marker_selected_grey.png'; // 알 수 없는 혼잡도 레벨
+  }
+
+  /// 혼잡도에 따라 추천 매장 마커 이미지 경로 반환
+  /// 추천 매장은 일반적으로 여유 상태이므로 green 사용
+  /// 주의: KakaoMap SDK는 하위 폴더를 지원하지 않을 수 있으므로 icons/ 직하위에 파일명으로 구분
+  /// 추천 매장 마커는 marker_*.png 형식 (selected가 없음)
+  String _getRecommendedMarkerImagePath(ZoneInfo? zoneInfo) {
+    if (zoneInfo == null || zoneInfo.crowdingLevel.isEmpty) {
+      return 'assets/icons/marker_grey.png'; // 정보 없음
     }
 
     final crowdingLevel = zoneInfo.crowdingLevel;
@@ -150,9 +191,14 @@ class _MapViewState extends State<MapView> {
   }
 
   /// 마커 아이콘 생성 (브랜드 아이콘 또는 기본 마커)
-  /// 현재는 KakaoMap SDK가 네트워크 이미지를 직접 지원하지 않으므로 기본 마커 사용
-  /// 브랜드 아이콘은 다운로드하여 캐시에 저장 (나중에 사용 가능)
-  Future<KImage> _createMarkerIcon(Place? place, ZoneInfo? zoneInfo, {double widthMultiplier = 1.0, double heightMultiplier = 1.0}) async {
+  /// isRecommended가 true면 추천 매장 마커, false면 선택 매장 마커 사용
+  Future<KImage> _createMarkerIcon(
+    Place? place, 
+    ZoneInfo? zoneInfo, {
+    bool isRecommended = false,
+    double widthMultiplier = 1.0, 
+    double heightMultiplier = 1.0,
+  }) async {
     // 브랜드 아이콘 URL이 있으면 다운로드하여 캐시에 저장 (백그라운드)
     if (place?.imageUrl != null && place!.imageUrl.isNotEmpty && place.imageUrl.startsWith('http')) {
       // 비동기로 다운로드 (결과를 기다리지 않음)
@@ -166,13 +212,37 @@ class _MapViewState extends State<MapView> {
       debugPrint('[MapView] 브랜드 아이콘 다운로드 시작: ${place.imageUrl}');
     }
     
-    // 현재는 KakaoMap SDK가 네트워크 이미지를 직접 지원하지 않으므로 기본 마커 사용
-    // TODO: 나중에 네이티브 플러그인 또는 다른 방법으로 브랜드 아이콘 표시 구현
-    return KImage.fromAsset(
-      _getMarkerImagePath(zoneInfo),
-      (_markerWidth * widthMultiplier).toInt(),
-      (_markerHeight * heightMultiplier).toInt(),
-    );
+    // 선택 매장 또는 추천 매장에 따라 적절한 마커 경로 사용
+    final markerPath = isRecommended 
+        ? _getRecommendedMarkerImagePath(zoneInfo)
+        : _getSelectedMarkerImagePath(zoneInfo);
+    
+    debugPrint('[MapView] 마커 이미지 경로: $markerPath');
+    debugPrint('[MapView] 마커 크기: ${(_markerWidth * widthMultiplier).toInt()}x${(_markerHeight * heightMultiplier).toInt()}');
+    debugPrint('[MapView] isRecommended: $isRecommended, zoneInfo: ${zoneInfo?.crowdingLevel ?? "null"}');
+    
+    try {
+      final kImage = KImage.fromAsset(
+        markerPath,
+        (_markerWidth * widthMultiplier).toInt(),
+        (_markerHeight * heightMultiplier).toInt(),
+      );
+      debugPrint('[MapView] ✅ KImage 생성 성공: $markerPath');
+      return kImage;
+    } catch (e, stackTrace) {
+      debugPrint('[MapView] ❌ KImage 생성 실패: $e');
+      debugPrint('[MapView] 스택 트레이스: $stackTrace');
+      // 에러 발생 시 기본 마커 사용 (fallback)
+      final fallbackPath = isRecommended
+          ? 'assets/icons/marker_green.png'
+          : 'assets/icons/marker_selected_green.png';
+      debugPrint('[MapView] Fallback 마커 사용: $fallbackPath');
+      return KImage.fromAsset(
+        fallbackPath,
+        (_markerWidth * widthMultiplier).toInt(),
+        (_markerHeight * heightMultiplier).toInt(),
+      );
+    }
   }
 
   @override
@@ -194,11 +264,36 @@ class _MapViewState extends State<MapView> {
   @override
   void didUpdateWidget(MapView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    
+    // recommendedPlaces 변경 감지 개선: null 체크 및 리스트 내용 비교
+    bool recommendedPlacesChanged = false;
+    if (widget.recommendedPlaces == null && oldWidget.recommendedPlaces == null) {
+      recommendedPlacesChanged = false;
+    } else if (widget.recommendedPlaces == null || oldWidget.recommendedPlaces == null) {
+      recommendedPlacesChanged = true; // null <-> 리스트 변경
+    } else {
+      // 둘 다 null이 아닌 경우: 길이 또는 내용 비교
+      if (widget.recommendedPlaces!.length != oldWidget.recommendedPlaces!.length) {
+        recommendedPlacesChanged = true;
+      } else {
+        // 길이가 같아도 내용이 다를 수 있으므로 ID 비교
+        final newIds = widget.recommendedPlaces!.map((p) => p.place.id).toSet();
+        final oldIds = oldWidget.recommendedPlaces!.map((p) => p.place.id).toSet();
+        recommendedPlacesChanged = !newIds.containsAll(oldIds) || !oldIds.containsAll(newIds);
+      }
+    }
+    
     // zoneInfo나 selectedPlace, recommendedPlaces가 변경되면 POI 업데이트 및 카메라 이동
     if (widget.zoneInfo != oldWidget.zoneInfo ||
         widget.selectedPlace?.id != oldWidget.selectedPlace?.id ||
-        widget.recommendedPlaces?.length != oldWidget.recommendedPlaces?.length) {
-      // 선택된 매장이 변경되면 위치 업데이트 및 카메라 이동
+        recommendedPlacesChanged) {
+      debugPrint('[MapView] didUpdateWidget: 변경 감지됨');
+      debugPrint('[MapView] - zoneInfo 변경: ${widget.zoneInfo != oldWidget.zoneInfo}');
+      debugPrint('[MapView] - selectedPlace 변경: ${widget.selectedPlace?.id != oldWidget.selectedPlace?.id}');
+      debugPrint('[MapView] - recommendedPlaces 변경: $recommendedPlacesChanged');
+      debugPrint('[MapView] - recommendedPlaces 개수: ${widget.recommendedPlaces?.length ?? 0}');
+      
+      // 선택된 매장이 변경되면 위치 업데이트 및 카메라 이동 (초기 로드가 아닌 경우)
       if (widget.selectedPlace != null) {
         setState(() {
           _currentPosition = LatLng(
@@ -206,14 +301,14 @@ class _MapViewState extends State<MapView> {
             widget.selectedPlace!.longitude,
           );
         });
-        _moveCameraToMarker();
+        _moveCameraToMarker(isInitialLoad: false);
       }
-      // 비동기 함수이므로 에러 처리 추가
-      _updateSelectedPlacePoi().catchError((e) {
+      // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
+      _updateRecommendedPlacesPoi().then((_) {
+        // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가
+        return _updateSelectedPlacePoi();
+      }).catchError((e) {
         debugPrint('[MapView] POI 업데이트 에러 (didUpdateWidget): $e');
-      });
-      _updateRecommendedPlacesPoi().catchError((e) {
-        debugPrint('[MapView] 추천 장소 POI 업데이트 에러 (didUpdateWidget): $e');
       });
     }
     // 사용자 위치는 스트림으로 처리하므로 didUpdateWidget에서는 처리하지 않음
@@ -263,26 +358,38 @@ class _MapViewState extends State<MapView> {
         });
 
         debugPrint('[MapView] 상태 업데이트 완료: _isMapReady=$_isMapReady, _controller=${_controller != null}');
+        debugPrint('[MapView] recommendedPlaces: ${widget.recommendedPlaces?.length ?? 0}개');
 
-        // 지도 준비 완료 후 카메라 이동 및 POI 추가
-        _moveCameraToMarker();
-        debugPrint('[MapView] _updateSelectedPlacePoi 호출 전');
-        // 비동기 함수이므로 에러 처리 추가
-        _updateSelectedPlacePoi().catchError((e) {
+        // 지도 준비 완료 후 카메라 이동 및 POI 추가 (초기 로드)
+        _moveCameraToMarker(isInitialLoad: true);
+        _isInitialLoad = false; // 초기 로드 완료
+        debugPrint('[MapView] POI 추가 시작');
+        // POI 추가 순서: 추천 장소 먼저, 선택 매장 나중에 (선택 매장이 위에 표시되도록)
+        _updateRecommendedPlacesPoi().then((_) {
+          // 추천 장소 POI 추가 완료 후 선택 매장 POI 추가
+          return _updateSelectedPlacePoi();
+        }).catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
-        });
-        _updateRecommendedPlacesPoi().catchError((e) {
-          debugPrint('[MapView] 추천 장소 POI 업데이트 에러: $e');
         });
         // 지도 준비 완료 후 현재 위치를 가져와서 POI 추가
         _loadInitialUserLocation().catchError((e) {
           debugPrint('[MapView] 초기 사용자 위치 로드 에러: $e');
         });
-        debugPrint('[MapView] _updateSelectedPlacePoi 호출 후');
+        debugPrint('[MapView] POI 추가 순서 보장 완료');
+        
+        // 동심원 가이드 초기화
+        _initializeUserRings();
       },
       onCameraMoveEnd: (cameraPosition, zoomLevel) {
         debugPrint('[MapView] 카메라 이동 완료: $cameraPosition, zoom: $zoomLevel');
         // 카메라 이동은 기본 지도 동작에 맡기고, POI는 지도 엔진이 자동으로 따라감
+        // 줌 레벨 업데이트 및 100m 링 show/hide 처리
+        // zoomLevel은 GestureType이므로 cameraPosition에서 zoomLevel을 가져옴
+        final newZoomLevel = cameraPosition.zoomLevel.toDouble();
+        if (_currentZoomLevel != newZoomLevel) {
+          _currentZoomLevel = newZoomLevel;
+          _updateRingVisibilityByZoom();
+        }
       },
     );
   }
@@ -340,9 +447,12 @@ class _MapViewState extends State<MapView> {
         // PoiStyle에 PNG 기반 아이콘 설정
         // 브랜드 아이콘이 있으면 사용, 없으면 혼잡도에 따라 적절한 색상의 마커 이미지 사용
         // 원본 PNG 비율을 유지하여 찌그러짐 방지
+        // 선택 매장이므로 isRecommended: false
+        // 기본 크기 사용 (기본 크기가 이미 선택 매장 기준으로 설정됨)
         final markerIcon = await _createMarkerIcon(
           widget.selectedPlace,
           widget.zoneInfo,
+          isRecommended: false,
         );
         
         // anchor는 KPoint 타입을 사용 (x, y = 아이콘 하단 중앙)
@@ -353,16 +463,19 @@ class _MapViewState extends State<MapView> {
           applyDpScale: true,
         );
         
-        debugPrint('[MapView] PoiStyle 생성: 브랜드 아이콘 또는 기본 마커, size=${_markerWidth.toInt()}x${_markerHeight.toInt()}, anchor=(0.5, 1.0)');
+        final markerPath = _getSelectedMarkerImagePath(widget.zoneInfo);
+        debugPrint('[MapView] PoiStyle 생성: 마커 경로=$markerPath, size=${_markerWidth.toInt()}x${_markerHeight.toInt()}, anchor=(0.5, 1.0)');
         
         // addPoi는 Future<Poi>를 반환하므로 await 필요
         // text 파라미터로 텍스트 전달
         // style 파라미터는 필수이므로 PoiStyle() 사용
+        debugPrint('[MapView] POI 추가 전: position=$position, text=$poiText');
         final addedPoi = await _controller!.labelLayer.addPoi(
           position,
           text: poiText,
           style: poiStyle,
         );
+        debugPrint('[MapView] POI 추가 후: addedPoi=$addedPoi');
         
         // POI가 실제로 추가되었는지 확인
         debugPrint('[MapView] POI 추가 후 labelLayer 상태 확인');
@@ -391,15 +504,21 @@ class _MapViewState extends State<MapView> {
 
   /// 추천 장소 POI 업데이트
   Future<void> _updateRecommendedPlacesPoi() async {
+    debugPrint('[MapView] _updateRecommendedPlacesPoi 호출됨');
+    debugPrint('[MapView] _isMapReady: $_isMapReady, _controller: ${_controller != null}');
+    debugPrint('[MapView] recommendedPlaces: ${widget.recommendedPlaces?.length ?? 0}개');
+    
     if (!_isMapReady || _controller == null) {
       debugPrint('[MapView] 추천 장소 POI 업데이트 스킵: 지도가 준비되지 않음');
       return;
     }
 
     // 기존 추천 장소 POI 제거
+    debugPrint('[MapView] 기존 추천 장소 POI 제거 중: ${_recommendedPois.length}개');
     for (final poi in _recommendedPois) {
       try {
         await _controller!.labelLayer.removePoi(poi);
+        debugPrint('[MapView] 기존 추천 장소 POI 제거 완료');
       } catch (e) {
         debugPrint('[MapView] 추천 장소 POI 제거 실패: $e');
       }
@@ -408,24 +527,33 @@ class _MapViewState extends State<MapView> {
 
     // 추천 장소가 없으면 종료
     if (widget.recommendedPlaces == null || widget.recommendedPlaces!.isEmpty) {
+      debugPrint('[MapView] 추천 장소가 없어서 POI 추가 스킵');
       return;
     }
 
     // 새 추천 장소 POI 추가 (최대 3개)
     final placesToShow = widget.recommendedPlaces!.take(3).toList();
-    for (final place in placesToShow) {
+    debugPrint('[MapView] 추천 장소 POI 추가 시작: ${placesToShow.length}개');
+    
+    for (final placeWithZone in placesToShow) {
       try {
+        final place = placeWithZone.place;
+        final zone = placeWithZone.zone;
         final position = LatLng(place.latitude, place.longitude);
-        final poiText = '${place.name}\n여유';
+        final crowdingLevel = zone.crowdingLevel.isNotEmpty ? zone.crowdingLevel : '여유';
+        final poiText = '${place.name}\n$crowdingLevel';
 
-        // 추천 장소는 선택 장소보다 작은 마커 사용 (항상 여유 상태이므로 green)
-        // 브랜드 아이콘이 있으면 사용, 없으면 기본 마커 사용
-        // 추천 장소는 항상 여유 상태이므로 zoneInfo를 null로 전달 (기본 green 마커)
+        debugPrint('[MapView] 추천 장소 처리 중: ${place.name}, 위치: ${place.latitude}, ${place.longitude}, 혼잡도: $crowdingLevel');
+
+        // 추천 장소의 실제 혼잡도에 따라 색상 결정 (API 결과 반영)
+        // 추천 장소 마커 사용 (isRecommended: true)
+        // 마커 크기를 선택 매장 마커 크기의 75%로 설정
         final markerIcon = await _createMarkerIcon(
           place,
-          null, // 추천 장소는 항상 여유 상태
-          widthMultiplier: 0.8,
-          heightMultiplier: 0.8,
+          zone, // 실제 API 결과의 zoneInfo 전달
+          isRecommended: true,
+          widthMultiplier: 0.75, // 선택 매장 크기의 75%
+          heightMultiplier: 0.75,
         );
 
         final poiStyle = PoiStyle(
@@ -434,6 +562,9 @@ class _MapViewState extends State<MapView> {
           applyDpScale: true,
         );
 
+        final markerPath = _getRecommendedMarkerImagePath(zone);
+        debugPrint('[MapView] 추천 장소 POI 추가 시도: place=${place.name}, zone=${zone.crowdingLevel}, markerPath=$markerPath, position=$position');
+        
         final addedPoi = await _controller!.labelLayer.addPoi(
           position,
           text: poiText,
@@ -441,11 +572,15 @@ class _MapViewState extends State<MapView> {
         );
 
         _recommendedPois.add(addedPoi);
-        debugPrint('[MapView] ✅ 추천 장소 POI 추가: ${place.name}');
-      } catch (e) {
-        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${place.name}, $e');
+        debugPrint('[MapView] ✅ 추천 장소 POI 추가 성공: ${place.name}, POI: $addedPoi');
+      } catch (e, stackTrace) {
+        debugPrint('[MapView] ❌ 추천 장소 POI 추가 실패: ${placeWithZone.place.name}');
+        debugPrint('[MapView] 에러: $e');
+        debugPrint('[MapView] 스택 트레이스: $stackTrace');
       }
     }
+    
+    debugPrint('[MapView] 추천 장소 POI 업데이트 완료: 총 ${_recommendedPois.length}개 추가됨');
   }
 
   /// 위치 스트림 구독 시작
@@ -524,6 +659,9 @@ class _MapViewState extends State<MapView> {
 
     // POI 업데이트
     await _updateUserLocationPoi(newLocation);
+    
+    // 동심원 가이드 업데이트 (throttle 적용)
+    _updateUserRings(newLocation);
   }
 
   /// 두 좌표 간 거리 계산 (미터 단위)
@@ -585,21 +723,163 @@ class _MapViewState extends State<MapView> {
       _userLocationPoi = addedPoi;
       debugPrint('[MapView] ✅ 사용자 위치 POI 추가 성공');
       debugPrint('[MapView] 사용자 위치: ${location.latitude}, ${location.longitude}');
+      
+      // 동심원 가이드 업데이트 (초기 로드 시)
+      _updateUserRings(location);
     } catch (e) {
       debugPrint('[MapView] ❌ 사용자 위치 POI 추가 실패: $e');
     }
   }
 
-  void _moveCameraToMarker() {
+  void _moveCameraToMarker({bool isInitialLoad = false}) {
     if (!_isMapReady || _controller == null || _currentPosition == null) {
       debugPrint('[MapView] 카메라 이동 실패: 지도가 아직 준비되지 않음');
       return;
     }
 
     debugPrint('[MapView] 카메라 위치: $_currentPosition');
+    
+    // 상단/하단 카드 영역을 제외한 지도 영역의 중심에 마커가 오도록 위치 조정
+    final screenHeight = MediaQuery.of(context).size.height;
+    final topCardHeight = widget.topCardHeight ?? 100.0; // 기본값: 100px
+    final bottomCardHeight = widget.bottomCardHeight ?? 250.0; // 기본값: 250px
+    
+    // 초기 로드 시에만 검색 매장의 혼잡도에 따라 위치 조정
+    // 그 외의 경우(추천 매장 선택 등)에는 기본 50% 위치 사용
+    double targetVerticalRatio;
+    if (isInitialLoad && widget.baseZoneInfo != null) {
+      // 검색 매장의 혼잡도 확인
+      final baseCrowdingLevel = widget.baseZoneInfo!.crowdingLevel;
+      final isBaseCongested = baseCrowdingLevel == '약간 붐빔' || baseCrowdingLevel == '붐빔';
+      
+      if (isBaseCongested) {
+        // 25% 위치: 상단 카드 아래에서 화면의 25% 지점
+        // 계산: topCardHeight + (screenHeight - topCardHeight - bottomCardHeight) * 0.25
+        final availableHeight = screenHeight - topCardHeight - bottomCardHeight;
+        final targetY = topCardHeight + availableHeight * 0.25;
+        targetVerticalRatio = targetY / screenHeight;
+        debugPrint('[MapView] 초기 로드: 검색 매장 혼잡 → 25% 위치로 조정');
+      } else {
+        // 50% 위치: 카드들의 중간 지점
+        targetVerticalRatio = (topCardHeight + bottomCardHeight) / 2 / screenHeight;
+        debugPrint('[MapView] 초기 로드: 검색 매장 여유/보통 → 50% 위치로 조정');
+      }
+    } else {
+      // 초기 로드가 아니거나 baseZoneInfo가 없는 경우: 기본 50% 위치
+      targetVerticalRatio = (topCardHeight + bottomCardHeight) / 2 / screenHeight;
+      debugPrint('[MapView] 초기 로드 아님 또는 baseZoneInfo 없음 → 50% 위치로 조정');
+    }
+    
+    // 위도 1도 ≈ 111km, 줌 레벨 16에서 화면 높이의 절반만큼 위로 이동하려면
+    // 줌 레벨 16에서 화면 높이 ≈ 1km 정도이므로
+    // 위도 조정량 = targetVerticalRatio * (화면에 표시되는 위도 범위)
+    // 줌 레벨 16에서 화면에 표시되는 위도 범위는 대략 0.01도 정도
+    final latitudeOffset = targetVerticalRatio * 0.01; // 줌 레벨 16 기준 대략적인 위도 조정량
+    
+    final adjustedPosition = LatLng(
+      _currentPosition!.latitude + latitudeOffset,
+      _currentPosition!.longitude,
+    );
+    
+    debugPrint('[MapView] 원래 위치: $_currentPosition');
+    debugPrint('[MapView] 조정된 위치: $adjustedPosition');
+    debugPrint('[MapView] 상단 카드 높이: $topCardHeight, 하단 카드 높이: $bottomCardHeight');
+    debugPrint('[MapView] 목표 세로 비율: $targetVerticalRatio');
+    debugPrint('[MapView] 위도 조정량: $latitudeOffset');
+    
+    // 카메라 위치 업데이트
+    setState(() {
+      _currentPosition = adjustedPosition;
+    });
+    
     // KakaoMapOption의 position이 이미 마커 좌표로 설정되어 있으므로,
     // 지도는 자동으로 올바른 위치에 표시됩니다.
     debugPrint('[MapView] 지도가 선택된 위치에 표시됩니다');
+  }
+
+  /// 동심원 가이드 초기화
+  /// 플러그인 내부에서 onMapReady 시점에 자동으로 초기화됨
+  /// Flutter에서는 별도 호출 불필요
+  Future<void> _initializeUserRings() async {
+    // 플러그인 내부에서 처리되므로 여기서는 마킹만
+    _ringsInitialized = true;
+    debugPrint('[MapView] ✅ 동심원 가이드 초기화 완료 (플러그인 내부 처리)');
+  }
+
+
+  /// 동심원 가이드 업데이트 (사용자 위치 변경 시)
+  /// 플러그인의 MethodChannel을 통해 updateUserRings 호출
+  Future<void> _updateUserRings(LatLng? userLocation) async {
+    if (!_isMapReady || _controller == null || !_ringsInitialized) {
+      return;
+    }
+
+    // 사용자 위치가 없으면 모든 링 숨김
+    if (userLocation == null) {
+      try {
+        // 플러그인 channel을 통해 hideAllRings 호출
+        await (_controller as dynamic).channel.invokeMethod('hideAllRings');
+      } catch (e) {
+        debugPrint('[MapView] ❌ 링 숨김 실패: $e');
+      }
+      return;
+    }
+
+    // Throttle 체크: 최소 300ms 간격 또는 2m 이상 이동
+    final now = DateTime.now();
+    if (_lastRingsUpdateTime != null) {
+      final timeDiff = now.difference(_lastRingsUpdateTime!);
+      if (timeDiff.inMilliseconds < 300) {
+        return; // 너무 빨리 업데이트 요청이 들어오면 스킵
+      }
+    }
+
+    if (_lastRingsUpdatePosition != null) {
+      final distance = _calculateDistance(
+        _lastRingsUpdatePosition!.latitude,
+        _lastRingsUpdatePosition!.longitude,
+        userLocation.latitude,
+        userLocation.longitude,
+      );
+      if (distance < 2.0) {
+        return; // 2m 미만 이동이면 스킵
+      }
+    }
+
+    // 업데이트 시간 및 위치 저장
+    _lastRingsUpdateTime = now;
+    _lastRingsUpdatePosition = userLocation;
+
+    try {
+      // 플러그인 channel을 통해 동심원 업데이트
+      // 플러그인 코드 수정 후 동작함
+      await (_controller as dynamic).channel.invokeMethod('updateUserRings', {
+        'latitude': userLocation.latitude,
+        'longitude': userLocation.longitude,
+        'zoomLevel': _currentZoomLevel,
+      });
+
+      debugPrint('[MapView] ✅ 동심원 가이드 업데이트 완료: ${userLocation.latitude}, ${userLocation.longitude}');
+    } catch (e) {
+      debugPrint('[MapView] ❌ 동심원 가이드 업데이트 실패: $e');
+    }
+  }
+
+  /// 줌 레벨에 따라 100m 링 show/hide
+  void _updateRingVisibilityByZoom() {
+    if (!_ringsInitialized || _controller == null) {
+      return;
+    }
+
+    try {
+      // 플러그인 channel을 통해 줌 레벨 업데이트
+      // 플러그인 코드 수정 후 동작함
+      (_controller as dynamic).channel.invokeMethod('updateZoomLevel', {
+        'zoomLevel': _currentZoomLevel,
+      });
+    } catch (e) {
+      debugPrint('[MapView] ❌ 줌 레벨 업데이트 실패: $e');
+    }
   }
 
   @override
@@ -678,6 +958,20 @@ class _MapViewState extends State<MapView> {
         }
       }
     }
+    // 동심원 가이드 정리
+    if (_ringsInitialized && _controller != null) {
+      try {
+        // dispose는 동기 메서드이므로 await 사용 불가
+        // 비동기 정리는 Future로 처리
+        // 플러그인 channel을 통해 disposeUserRings 호출
+        (_controller as dynamic).channel.invokeMethod('disposeUserRings').catchError((e) {
+          debugPrint('[MapView] 동심원 가이드 정리 실패: $e');
+        });
+      } catch (e) {
+        debugPrint('[MapView] 동심원 가이드 정리 실패: $e');
+      }
+    }
+    
     _controller = null;
     _isMapReady = false;
     _currentPoi = null;
@@ -685,6 +979,9 @@ class _MapViewState extends State<MapView> {
     _recommendedPois.clear();
     _lastUserLocationPoiPosition = null;
     _lastUserLocationUpdateTime = null;
+    _lastRingsUpdatePosition = null;
+    _lastRingsUpdateTime = null;
+    _ringsInitialized = false;
     super.dispose();
   }
 }

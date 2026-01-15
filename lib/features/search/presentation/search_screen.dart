@@ -61,6 +61,25 @@ class _SearchScreenState extends State<SearchScreen> {
                 ),
               ),
             ),
+            // 위치 정보 로딩 중일 때 표시
+            if (controller.isLocationLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      '위치 정보를 가져오는 중...',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+              ),
             // 검색창 바로 아래 자동완성 리스트 (검색어가 있을 때만 표시)
             if (_searchController.text.trim().isNotEmpty) _buildAutocompleteList(),
             // 검색어가 없을 때만 최근 검색어 표시
@@ -91,18 +110,27 @@ class _SearchScreenState extends State<SearchScreen> {
     if (controller.error != null) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        child: Text(
-          controller.error!,
-          style: const TextStyle(color: Colors.red),
+        child: Column(
+          children: [
+            Text(
+              '검색 중 오류가 발생했습니다',
+              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              controller.error!,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+          ],
         ),
       );
     }
 
     if (controller.results.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
         child: Center(
-          child: Text('검색 결과가 없습니다.'),
+          child: Text('검색 결과가 없습니다.\n다른 검색어를 시도해보세요.'),
         ),
       );
     }
