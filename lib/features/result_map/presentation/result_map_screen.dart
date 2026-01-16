@@ -107,6 +107,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
   PlacesInsightResponse? _insightData;
   bool _isLoading = false;
   bool _showLongLoadingIndicator = false; // 3초 이상 로딩 시 원형 프로그레스바 표시
+  DateTime? _loadingStartTime; // 로딩 시작 시간 추적
+  bool _showSecondLoadingMessage = false; // 0.5초 후 두 번째 메시지 표시 여부
   Place? _currentSelectedPlace; // 현재 선택된 장소 (recommended place 선택 시 업데이트)
   late AnimationController _animationController; // 애니메이션 컨트롤러
   RecommendTimesResponse? _recommendTimesData; // 추천 시간대 데이터
@@ -196,6 +198,17 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     setState(() {
       _isLoading = true;
       _showLongLoadingIndicator = false;
+      _showSecondLoadingMessage = false;
+      _loadingStartTime = DateTime.now(); // 로딩 시작 시간 기록
+    });
+
+    // 0.5초 후 두 번째 메시지로 전환
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (_isLoading && mounted) {
+        setState(() {
+          _showSecondLoadingMessage = true;
+        });
+      }
     });
 
     // 3초 후에도 로딩 중이면 원형 프로그레스바 표시
@@ -246,6 +259,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               _insightData = insightData;
               _isLoading = false;
               _showLongLoadingIndicator = false;
+              _showSecondLoadingMessage = false;
+              _loadingStartTime = null;
               
               // PLACE 탭 상태 업데이트
               if (_selectedTab == 'place') {
@@ -484,6 +499,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
       _insightData = debugData;
       _isLoading = false;
       _showLongLoadingIndicator = false;
+      _showSecondLoadingMessage = false;
+      _loadingStartTime = null;
       _isBottomSheetExpanded = true; // 하단 카드는 항상 펼침 상태 유지
       // 추천 리스트가 처음 표시될 때 base 스냅샷 캡처 (검색 매장만 저장)
       if (debugData.alternatives.isNotEmpty && _viewState == ViewState.baseSelectedView) {
@@ -802,31 +819,8 @@ class _ResultMapScreenState extends State<ResultMapScreen>
               },
             )
             else
-              // 지도 로딩 중: 흰 화면 + 돋보기 아이콘 + 문구
-              Container(
-                color: Colors.white,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.explore,
-                        size: 64,
-                        color: Colors.grey[400],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        '지도를 불러오고 있어요',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              // 지도 로딩 중: 흰 화면 + 단계별 아이콘 + 문구
+              _buildLoadingScreen(),
             // 3초 이상 로딩 중일 때 원형 프로그레스바 표시
             if (_showLongLoadingIndicator && !_isLoading)
               Stack(
@@ -2155,6 +2149,49 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                 },
               )
             : _buildPlaceholderIcon(size, category: category, categoryGroupCode: categoryGroupCode),
+      ),
+    );
+  }
+
+  /// 로딩 화면 빌더 (단계별 메시지와 아이콘 표시)
+  Widget _buildLoadingScreen() {
+    final message = _showSecondLoadingMessage
+        ? '주변 매장의 혼잡도를 계산하고 있어요'
+        : '주변 매장 정보를 불러오고 있어요';
+    
+    return Container(
+      color: Colors.white,
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _showSecondLoadingMessage
+                ? SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Colors.grey[400]!.withOpacity(0.9),
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.location_on,
+                    size: 56,
+                    color: Colors.grey[400]?.withOpacity(0.9),
+                  ),
+            const SizedBox(height: 18),
+            Text(
+              message,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
