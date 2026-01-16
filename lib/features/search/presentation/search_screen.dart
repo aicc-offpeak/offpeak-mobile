@@ -14,9 +14,11 @@ class SearchScreen extends StatefulWidget {
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchScreenState extends State<SearchScreen>
+    with SingleTickerProviderStateMixin {
   final controller = search.SearchController();
   final _searchController = TextEditingController();
+  bool _hasShownRecommendations = false; // 첫 등장 여부 추적
 
   @override
   void initState() {
@@ -237,70 +239,68 @@ class _SearchScreenState extends State<SearchScreen> {
       return _buildLoadingCard();
     }
 
-    // Case 4: 20km까지 확대했으나 결과 없음
-    if (controller.recommendedPlaces.isEmpty) {
-      return _buildEmptyStateCard();
+    // Case 4 & 5: 혼잡도 필터링 및 카드 개수별 UI 모드 전환
+    // 필터링: "붐빔"은 항상 숨기고, "여유", "보통"만 기본 표시
+    final filteredPlaces = _filterPlacesByCrowding(controller.recommendedPlaces);
+    final secondaryPlaces = _getSecondaryPlaces(controller.recommendedPlaces, filteredPlaces);
+    
+    final isEmpty = filteredPlaces.isEmpty;
+    final wasEmpty = _hasShownRecommendations == false;
+    final isFirstAppearance = wasEmpty && !isEmpty;
+    
+    if (isEmpty) {
+      // empty-state로 돌아가면 플래그 리셋
+      _hasShownRecommendations = false;
+    } else if (isFirstAppearance) {
+      // 첫 등장 시 플래그 설정
+      _hasShownRecommendations = true;
     }
 
-    // Case 5: 결과 있음
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '지금 덜 붐비는 곳',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey[800],
-                  ),
-                ),
-                // 섹션 단위 갱신 시간 표시 (첫 번째 카드 기준)
-                if (controller.recommendedPlaces.isNotEmpty &&
-                    controller.recommendedPlaces.first.crowdingUpdatedAt > 0)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4.0),
-                    child: Text(
-                      _formatUpdatedAtForSection(
-                          controller.recommendedPlaces.first.crowdingUpdatedAt),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ),
-              ],
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 350),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeOut,
+      transitionBuilder: (child, animation) {
+        final isEntering = animation.status == AnimationStatus.forward ||
+            animation.value > 0.5;
+        final isRecommendations = child.key == const ValueKey('recommendations') ||
+            child.key == const ValueKey('recommendations_secondary');
+        final isEmptyState = child.key == const ValueKey('empty');
+        
+        // 첫 등장 시에만 커스텀 애니메이션 적용
+        if (isFirstAppearance) {
+          if (isRecommendations && isEntering) {
+            // Cards enter 애니메이션
+            return _buildCardsEnterAnimation(child, animation);
+          } else if (isEmptyState && !isEntering) {
+            // Empty-state exit 애니메이션
+            return _buildEmptyStateExitAnimation(child, animation);
+          }
+        }
+        
+        // 이후 전환은 기본 페이드
+        return FadeTransition(
+          opacity: animation,
+          child: child,
+        );
+      },
+      layoutBuilder: (currentChild, previousChildren) {
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.topCenter,
+          children: <Widget>[
+            ...previousChildren,
+            if (currentChild != null) currentChild,
+          ],
+        );
+      },
+      child: isEmpty
+          ? _buildEmptyStateCard(key: const ValueKey('empty'))
+          : _buildRecommendationsContent(
+              key: const ValueKey('recommendations'),
+              places: filteredPlaces,
+              secondaryPlaces: secondaryPlaces,
             ),
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              // 화면 세로 크기의 25%, 최소 200px, 최대 250px
-              final screenHeight = MediaQuery.of(context).size.height;
-              final cardViewHeight = (screenHeight * 0.25).clamp(200.0, 250.0);
-              
-              return SizedBox(
-                height: cardViewHeight,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.fromLTRB(16.0, 0, 16.0, 12.0), // 하단 패딩 12px
-                  itemCount: controller.recommendedPlaces.length,
-                  itemBuilder: (context, index) {
-                    final place = controller.recommendedPlaces[index];
-                    return _buildRecommendationCard(place);
-                  },
-                ),
-              );
-            },
-          ),
-        ],
-      ),
     );
   }
 
@@ -438,100 +438,330 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  Widget _buildEmptyStateCard() {
+  /// 혼잡도 레벨 정규화 (공백 제거)
+  String _normalizeCrowdingLevel(String level) {
+    return level.trim().replaceAll(' ', '');
+  }
+
+  /// 혼잡도 필터링: "붐빔" 제외, "여유", "보통"만 표시
+  List<Place> _filterPlacesByCrowding(List<Place> places) {
+    return places.where((place) {
+      final level = _normalizeCrowdingLevel(place.crowdingLevel);
+      return level == '여유' || level == '보통';
+    }).toList();
+  }
+
+  /// Secondary places: primary가 0개일 때만 "약간붐빔" 반환
+  List<Place> _getSecondaryPlaces(List<Place> allPlaces, List<Place> primaryPlaces) {
+    if (primaryPlaces.isNotEmpty) return [];
+    
+    return allPlaces.where((place) {
+      final level = _normalizeCrowdingLevel(place.crowdingLevel);
+      // "붐빔"은 어떤 경우에도 제외
+      if (level == '붐빔') return false;
+      // "약간붐빔" 또는 "약간 붐빔"만 허용
+      return level == '약간붐빔';
+    }).toList();
+  }
+
+  /// 추천 카드 콘텐츠 빌드 (필터링된 places와 secondary places 사용)
+  Widget _buildRecommendationsContent({
+    required Key key,
+    required List<Place> places,
+    required List<Place> secondaryPlaces,
+  }) {
+    final count = places.length;
+    
     return Container(
-      margin: const EdgeInsets.all(16.0),
-      padding: const EdgeInsets.all(20.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      key: key,
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.star_outline,
-            size: 48,
-            color: Colors.grey[400]!.withOpacity(0.9),
+          // Primary 섹션
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '지금 덜 붐비는 곳',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                // 섹션 부제목 (카드 개수에 따라)
+                if (count == 2)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      '지금 근처에서 덜 붐비는 곳이 2곳 있어요.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  )
+                else if (count == 1)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      '지금 근처에서 덜 붐비는 곳이 많지 않아요.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
+                // 섹션 단위 갱신 시간 표시 (첫 번째 카드 기준)
+                if (places.isNotEmpty && places.first.crowdingUpdatedAt > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      _formatUpdatedAtForSection(places.first.crowdingUpdatedAt),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
-          const Text(
-            '지금은 모든 곳이 붐비네요!',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '주변 20km 내에 여유로운 매장을 찾지 못했어요',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '• 시간대를 바꿔보시겠어요?',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[600],
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '• 조금 후에 다시 확인해보세요',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[600],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    // TODO: 알림 받기 기능 구현
-                  },
-                  child: const Text('알림 받기'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () {
-                    // TODO: 검색 조건 변경 기능 구현
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
+          // 카드 개수에 따른 UI 모드 전환
+          _buildCardsByCount(places, count),
+          // Secondary 섹션 (primary가 0개일 때만)
+          if (secondaryPlaces.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '대안: 지금은 조금 붐빌 수 있어요',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[700],
+                    ),
                   ),
-                  child: const Text('검색 조건 변경'),
-                ),
+                  const SizedBox(height: 12),
+                  _buildSecondaryCards(secondaryPlaces),
+                ],
               ),
-            ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 카드 개수에 따른 UI 모드 전환
+  Widget _buildCardsByCount(List<Place> places, int count) {
+    if (count >= 3) {
+      // horizontal_carousel: 기존 가로 슬라이드 유지
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final screenHeight = MediaQuery.of(context).size.height;
+          final cardViewHeight = (screenHeight * 0.25).clamp(200.0, 250.0);
+          
+          return SizedBox(
+            height: cardViewHeight,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16.0, 0, 16.0, 12.0),
+              itemCount: places.length,
+              itemBuilder: (context, index) {
+                return _buildRecommendationCard(places[index]);
+              },
+            ),
+          );
+        },
+      );
+    } else if (count == 2) {
+      // featured_pair: 카드 너비 거의 전체, 첫 번째 아이템 중앙 정렬
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: Row(
+          children: [
+            Expanded(
+              child: _buildRecommendationCard(places[0], isFeatured: true),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildRecommendationCard(places[1], isFeatured: true),
+            ),
+          ],
+        ),
+      );
+    } else if (count == 1) {
+      // featured_single: 카드 전체 너비, 중앙 정렬
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: Center(
+          child: _buildRecommendationCard(places[0], isFeatured: true, isFullWidth: true),
+        ),
+      );
+    }
+    
+    return const SizedBox.shrink();
+  }
+
+  /// Secondary 카드 빌드 (약간붐빔)
+  Widget _buildSecondaryCards(List<Place> places) {
+    return Column(
+      children: places.take(3).map((place) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12.0),
+          child: _buildRecommendationCard(place, isFeatured: true, isFullWidth: true),
+        );
+      }).toList(),
+    );
+  }
+
+  /// Empty-state exit 애니메이션 (120-160ms)
+  Widget _buildEmptyStateExitAnimation(Widget child, Animation<double> animation) {
+    final exitAnimation = CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0.0, 0.45, curve: Curves.easeOut),
+    );
+
+    return FadeTransition(
+      opacity: Tween<double>(begin: 1.0, end: 0.0).animate(exitAnimation),
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 1.0, end: 0.98).animate(exitAnimation),
+        child: Transform.translate(
+          offset: Tween<Offset>(
+            begin: Offset.zero,
+            end: const Offset(0, 5),
+          ).animate(exitAnimation).value,
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  /// Cards enter 애니메이션 (180-220ms)
+  Widget _buildCardsEnterAnimation(Widget child, Animation<double> animation) {
+    final enterAnimation = CurvedAnimation(
+      parent: animation,
+      curve: const Interval(0.35, 1.0, curve: Curves.easeOut),
+    );
+
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.0, end: 1.0).animate(enterAnimation),
+      child: Transform.translate(
+        offset: Tween<Offset>(
+          begin: const Offset(0, -8),
+          end: Offset.zero,
+        ).animate(enterAnimation).value,
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildEmptyStateCard({required Key key}) {
+    return Container(
+      key: key,
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 섹션 제목
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '지금 덜 붐비는 곳',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+                textAlign: TextAlign.left,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // 카드가 있을 때와 동일한 높이 유지
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final screenHeight = MediaQuery.of(context).size.height;
+              final cardViewHeight = (screenHeight * 0.25).clamp(200.0, 250.0);
+              
+              return SizedBox(
+                height: cardViewHeight,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 마커 아이콘 중앙 배치, 크기 2.5배 (20px → 50px)
+                        Icon(
+                          Icons.location_on_outlined,
+                          size: 50,
+                          color: Colors.grey[400],
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '지금은 덜 붐비는 곳이 없어요',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '지금 이 근처는 전반적으로 붐비는 편이에요.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[600],
+                                height: 1.5,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            Text(
+                              '조금 시간이 지나면 다시 확인해 보세요.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[600],
+                                height: 1.5,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildRecommendationCard(Place place) {
+  Widget _buildRecommendationCard(
+    Place place, {
+    bool isFeatured = false,
+    bool isFullWidth = false,
+  }) {
     // 혼잡도에 따른 색상 결정
     final crowdingLevel = place.crowdingLevel.isNotEmpty ? place.crowdingLevel : '여유';
     final badgeConfig = _getBadgeConfig(crowdingLevel);
@@ -540,8 +770,8 @@ class _SearchScreenState extends State<SearchScreen> {
     final categoryKeyword = _extractCategoryKeyword(place.category);
 
     return Container(
-      width: 168,
-      margin: const EdgeInsets.only(right: 12),
+      width: isFullWidth ? double.infinity : (isFeatured ? null : 168),
+      margin: EdgeInsets.only(right: isFeatured ? 0 : 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
