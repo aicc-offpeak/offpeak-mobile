@@ -9,6 +9,7 @@ class Place {
   final String categoryGroupCode;
   final String imageUrl;
   final String crowdingLevel; // 혼잡도 레벨 (여유, 보통, 약간 붐빔, 붐빔)
+  final int crowdingUpdatedAt; // 혼잡도 갱신 시각 (epoch timestamp)
 
   const Place({
     required this.id,
@@ -21,6 +22,7 @@ class Place {
     this.categoryGroupCode = '',
     this.imageUrl = '',
     this.crowdingLevel = '',
+    this.crowdingUpdatedAt = 0,
   });
 
   factory Place.fromJson(Map<String, dynamic> json) {
@@ -45,6 +47,7 @@ class Place {
       categoryGroupCode: safeString(json['category_group_code']),
       imageUrl: safeString(json['image_url']),
       crowdingLevel: safeString(json['crowding_level'] ?? json['crowdingLevel']),
+      crowdingUpdatedAt: ((json['crowding_updated_at'] ?? 0) as num).toInt(),
     );
   }
 

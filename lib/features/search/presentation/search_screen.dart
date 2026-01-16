@@ -250,13 +250,32 @@ class _SearchScreenState extends State<SearchScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Text(
-              '근처 여유로운 곳',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[800],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '지금 덜 붐비는 곳',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                // 섹션 단위 갱신 시간 표시 (첫 번째 카드 기준)
+                if (controller.recommendedPlaces.isNotEmpty &&
+                    controller.recommendedPlaces.first.crowdingUpdatedAt > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      _formatUpdatedAtForSection(
+                          controller.recommendedPlaces.first.crowdingUpdatedAt),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 12),
@@ -397,12 +416,24 @@ class _SearchScreenState extends State<SearchScreen> {
     return Container(
       margin: const EdgeInsets.all(16.0),
       padding: const EdgeInsets.all(20.0),
-      child: const Center(
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          backgroundColor: Color(0xFFE0E0E0), // 트랙 색상
-          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF616161)), // 진행 인디케이터 색상
-        ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(
+            strokeWidth: 2,
+            backgroundColor: Color(0xFFE0E0E0), // 트랙 색상
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF616161)), // 진행 인디케이터 색상
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '이 근처에서 지금 덜 붐비는 곳을 찾고 있어요',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -501,24 +532,22 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildRecommendationCard(Place place) {
-    final brandIcon = BrandIconMapper.getBrandIconAsset(place.name);
-    final defaultIcon = place.category.contains('카페') || place.category.contains('커피')
-        ? 'assets/brands/placeholder_cafe.png'
-        : 'assets/brands/placeholder_meal.png';
-
     // 혼잡도에 따른 색상 결정
     final crowdingLevel = place.crowdingLevel.isNotEmpty ? place.crowdingLevel : '여유';
     final badgeConfig = _getBadgeConfig(crowdingLevel);
+    
+    // 카테고리에서 브랜드 또는 성격 키워드 추출
+    final categoryKeyword = _extractCategoryKeyword(place.category);
 
     return Container(
-      width: 168, // 280 * 0.6 = 168
+      width: 168,
       margin: const EdgeInsets.only(right: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
+            color: Colors.black.withOpacity(0.05), // 그림자 연하게
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -536,93 +565,185 @@ class _SearchScreenState extends State<SearchScreen> {
             );
           },
           child: Padding(
-            padding: const EdgeInsets.all(10.0), // 12 -> 10으로 줄여서 공간 확보
+            padding: const EdgeInsets.all(12.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 브랜드 아이콘 또는 플레이스홀더
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.asset(
-                    brandIcon ?? defaultIcon,
-                    width: double.infinity,
-                    height: 70, // 80 -> 70으로 더 줄임
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        width: double.infinity,
-                        height: 70,
-                        color: Colors.grey[200],
-                        child: Icon(
-                          Icons.store,
-                          color: Colors.grey[400],
-                          size: 28,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 6),
-                // 장소명
-                Text(
-                  place.name,
-                  style: const TextStyle(
-                    fontSize: 12, // 13 -> 12로 줄임
-                    fontWeight: FontWeight.bold,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 5),
-                // 혼잡도 배지 (지도 화면 스타일과 통일, 크기 조정)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10, // 14 -> 10으로 줄임 (카드가 작으므로)
-                    vertical: 5, // 6 -> 5로 줄임
-                  ),
-                  decoration: BoxDecoration(
-                    color: badgeConfig['bg'],
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    crowdingLevel,
-                    style: TextStyle(
-                      fontSize: 11, // 13 -> 11로 줄임
-                      color: badgeConfig['text'],
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 5),
-                // 거리 정보
+                // Line 1: 매장명 + 혼잡도 배지 (오른쪽 inline)
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        place.name,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          height: 1.2,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // 혼잡도 배지 (작게, 보조 신호)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeConfig['bg'],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        crowdingLevel,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: badgeConfig['text'],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Line 2: 도보 시간/거리
+                Row(
                   children: [
                     Icon(
-                      Icons.location_on,
-                      size: 11, // 12 -> 11로 줄임
+                      Icons.directions_walk,
+                      size: 12,
                       color: Colors.grey[600],
                     ),
-                    const SizedBox(width: 3),
+                    const SizedBox(width: 4),
                     Flexible(
                       child: Text(
                         _formatDistance(place.distanceM),
                         style: TextStyle(
-                          fontSize: 11, // 12 -> 11로 줄임
-                          color: Colors.grey[600],
+                          fontSize: 12,
+                          color: Colors.grey[700],
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
                 ),
+                // Line 3: 카테고리 키워드 (있는 경우만)
+                if (categoryKeyword.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    categoryKeyword,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// 카테고리에서 브랜드 또는 성격 키워드 추출
+  /// category_name 형식: "음식점 > 카페 > 커피전문점 > 커피에반하다"
+  /// - 마지막 토큰이 고유명사면 브랜드로 간주
+  /// - 중간 토큰에서 성격 키워드 추출 (커피전문점, 무인카페, 테마카페 등)
+  String _extractCategoryKeyword(String category) {
+    if (category.isEmpty) return '';
+    
+    // ">" 또는 ">"로 분리된 토큰 추출
+    final tokens = category.split(RegExp(r'\s*[>|]\s*')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    
+    if (tokens.isEmpty) return '';
+    
+    // 마지막 토큰이 브랜드일 가능성 체크 (고유명사 패턴)
+    final lastToken = tokens.last;
+    // 브랜드 패턴: 한글+영문 조합, 특정 브랜드명 패턴 등
+    if (_isBrandName(lastToken)) {
+      return lastToken;
+    }
+    
+    // 중간 토큰에서 성격 키워드 추출
+    for (final token in tokens) {
+      final lowerToken = token.toLowerCase();
+      
+      // 성격 키워드 매핑
+      if (lowerToken.contains('커피전문점') || lowerToken.contains('커피숍')) {
+        return '커피전문점';
+      } else if (lowerToken.contains('무인') || lowerToken.contains('셀프')) {
+        return '무인카페';
+      } else if (lowerToken.contains('테마')) {
+        return '테마카페';
+      } else if (lowerToken.contains('로스터리') || lowerToken.contains('로스팅')) {
+        return '로스터리';
+      } else if (lowerToken.contains('베이커리')) {
+        return '베이커리';
+      } else if (lowerToken.contains('프랜차이즈') || lowerToken.contains('체인')) {
+        return '프랜차이즈';
+      }
+    }
+    
+    // 기본적으로 '카페'는 표시하지 않음 (요구사항: 모든 카드를 '카페'로 통합 표기하지 말 것)
+    return '';
+  }
+  
+  /// 토큰이 브랜드명인지 판단 (고유명사 패턴)
+  bool _isBrandName(String token) {
+    if (token.isEmpty) return false;
+    
+    // 브랜드명 패턴:
+    // 1. 영문 포함 (예: "스타벅스", "메가MGC커피")
+    // 2. 특정 브랜드명 리스트에 포함
+    // 3. 일반적인 카테고리명이 아닌 경우
+    
+    final commonCategoryNames = [
+      '카페', '커피', '음식점', '커피전문점', '테마카페', '무인카페',
+      '로스터리', '베이커리', '프랜차이즈', '체인', '전문점'
+    ];
+    
+    // 일반 카테고리명이면 브랜드 아님
+    if (commonCategoryNames.any((name) => token.contains(name))) {
+      return false;
+    }
+    
+    // 영문 포함 또는 특정 패턴이면 브랜드로 간주
+    if (RegExp(r'[A-Za-z]').hasMatch(token)) {
+      return true;
+    }
+    
+    // 토큰 길이가 짧고(2-4자) 일반 카테고리명이 아니면 브랜드 가능성
+    if (token.length >= 2 && token.length <= 6) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /// 섹션용 갱신 시각 포맷팅 ("약 n분 전 기준")
+  String _formatUpdatedAtForSection(int updatedAtEpoch) {
+    if (updatedAtEpoch == 0) return '';
+    
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final diffSeconds = now - updatedAtEpoch;
+    
+    if (diffSeconds < 60) {
+      return '방금 전 기준';
+    } else if (diffSeconds < 3600) {
+      final minutes = diffSeconds ~/ 60;
+      return '약 $minutes분 전 기준';
+    } else if (diffSeconds < 86400) {
+      final hours = diffSeconds ~/ 3600;
+      return '약 $hours시간 전 기준';
+    }
+    
+    return '';
   }
 
   Map<String, Color> _getBadgeConfig(String crowdingLevel) {
