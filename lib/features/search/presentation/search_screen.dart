@@ -712,7 +712,7 @@ class _SearchScreenState extends State<SearchScreen>
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          '지금은 덜 붐비는 곳이 없어요',
+                          '지금은 조건에 맞는 장소가 없어요',
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
@@ -735,7 +735,7 @@ class _SearchScreenState extends State<SearchScreen>
                               textAlign: TextAlign.center,
                             ),
                             Text(
-                              '조금 시간이 지나면 다시 확인해 보세요.',
+                              '시간이 지나면 상황이 달라질 수 있어요.',
                               style: TextStyle(
                                 fontSize: 13,
                                 color: Colors.grey[600],
