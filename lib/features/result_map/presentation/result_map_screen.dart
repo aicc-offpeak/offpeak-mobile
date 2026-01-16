@@ -1554,26 +1554,18 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     }
     
     if (daysDiff == 0) {
-      // Today
+      // Today: N시간 후
       final hoursDiff = window.startHour - now.hour;
       if (hoursDiff <= 0) {
-        return '🕒 지금';
+        return '지금';
       } else {
-        return '🕒 $hoursDiff시간 후';
+        return '$hoursDiff시간 후';
       }
     } else if (daysDiff == 1) {
-      // Tomorrow
-      final hour = window.startHour;
-      if (hour < 12) {
-        return '☀️ 내일 오전';
-      } else {
-        return '☀️ 내일 오후';
-      }
-    } else if (daysDiff == 2) {
-      // Day after tomorrow
-      return '🌤️ 모레';
+      // Tomorrow: 다음날
+      return '다음날';
     } else {
-      // More than 2 days
+      // More than 1 day: 요일 그대로
       return '${window.dowName}요일';
     }
   }
@@ -1730,14 +1722,14 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const SizedBox(height: 20),
         // Action buttons
         _buildActionButton(
-          label: '시간 바꾸기',
+          label: '다른 시간 추천받기',
           subLabel: '더 여유로운 시간대를 추천해드릴게요',
           onPressed: _isLoadingExpand ? null : _openTimeRecommendation,
           isPrimary: true,
         ),
         const SizedBox(height: 12),
         _buildActionButton(
-          label: '범위 넓혀서 찾기',
+          label: '주변 더 넓게 찾아보기',
           subLabel: '주변 2km까지 확대됩니다',
           onPressed: _isLoadingExpand ? null : _expandRadiusAndRefetch,
           isPrimary: false,
@@ -1773,7 +1765,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         const SizedBox(height: 20),
         // Action buttons
         _buildActionButton(
-          label: '시간 바꾸기',
+          label: '다른 시간 추천받기',
           subLabel: '더 여유로운 시간대를 추천해드릴게요',
           onPressed: _isLoadingExpand ? null : _openTimeRecommendation,
           isPrimary: true,
@@ -1799,15 +1791,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
     bool isLoading = false,
   }) {
     if (isPrimary) {
-      // 시간 바꾸기: 중성 배경 버튼 (연한 회색/웜 화이트 배경, 다크 그레이 텍스트)
+      // 다른 시간 추천받기: 중성 배경 버튼 (연한 중립 톤 배경, 다크 그레이 텍스트)
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           ElevatedButton(
             onPressed: onPressed,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFF0EBEB), // R240 G235 B235
-              foregroundColor: const Color(0xFF1A1A1A), // 거의 블랙에 가까운 다크 그레이
+              backgroundColor: const Color(0xFFF2F4F6), // 연한 중립 톤
+              foregroundColor: const Color(0xFF222222), // 다크 그레이 (#222)
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -1820,7 +1812,7 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     width: 20,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A1A1A)),
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF222222)),
                     ),
                   )
                 : Text(
@@ -1843,18 +1835,19 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ],
       );
     } else {
-      // 범위 넓혀서 찾기: 배경 없는 텍스트 버튼 (더 차분하게)
+      // 주변 더 넓게 찾아보기: Text Button (배경 없음, 중간 그레이 텍스트, 오른쪽 아이콘)
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           TextButton(
             onPressed: onPressed,
             style: TextButton.styleFrom(
-              foregroundColor: const Color(0xFF1A1A1A), // 다크 그레이
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12), // 시간 바꾸기보다 작게
+              foregroundColor: const Color(0xFF666666), // 중간 그레이 (#666)
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
+              minimumSize: const Size(double.infinity, 48), // 터치 영역 확보
             ),
             child: isLoading
                 ? const SizedBox(
@@ -1862,15 +1855,26 @@ class _ResultMapScreenState extends State<ResultMapScreen>
                     width: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1A1A1A)),
+                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF666666)),
                     ),
                   )
-                : Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 14, // 시간 바꾸기보다 작게
-                      fontWeight: FontWeight.w500, // 시간 바꾸기보다 약하게
-                    ),
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        size: 14,
+                        color: Color(0xFF666666),
+                      ),
+                    ],
                   ),
           ),
           const SizedBox(height: 4),
