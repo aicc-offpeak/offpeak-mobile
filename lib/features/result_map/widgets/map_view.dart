@@ -89,9 +89,9 @@ class _MapViewState extends State<MapView> {
     if (crowdingLevel == '여유' || crowdingLevel == '원활') {
       return 'assets/icons/marker_selected_green.png';
     } else if (crowdingLevel == '보통') {
-      return 'assets/icons/marker_selected_yellow.png';
+      return 'assets/icons/marker_selected_lightgreen.png'; // lightgreen 사용
     } else if (crowdingLevel == '약간 붐빔') {
-      return 'assets/icons/marker_selected_orange.png';
+      return 'assets/icons/marker_selected_yellow.png'; // orange -> yellow
     } else if (crowdingLevel == '붐빔') {
       return 'assets/icons/marker_selected_red.png';
     }
@@ -113,9 +113,9 @@ class _MapViewState extends State<MapView> {
     if (crowdingLevel == '여유' || crowdingLevel == '원활') {
       return 'assets/icons/marker_green.png';
     } else if (crowdingLevel == '보통') {
-      return 'assets/icons/marker_yellow.png';
+      return 'assets/icons/marker_lightgreen.png'; // lightgreen 사용
     } else if (crowdingLevel == '약간 붐빔') {
-      return 'assets/icons/marker_orange.png';
+      return 'assets/icons/marker_yellow.png'; // orange -> yellow
     } else if (crowdingLevel == '붐빔') {
       return 'assets/icons/marker_red.png';
     }

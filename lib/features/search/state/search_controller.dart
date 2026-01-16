@@ -6,24 +6,34 @@ import '../../../core/utils/debouncer.dart';
 import '../../../core/utils/logger.dart';
 import '../../../data/models/place.dart';
 import '../../../data/models/search_request.dart';
+import '../../../data/repositories/recommendations_repository.dart';
 import '../../../data/repositories/search_repository.dart';
 
 class SearchController extends ChangeNotifier {
   SearchController({
     SearchRepository? repository,
+    RecommendationsRepository? recommendationsRepository,
     LocationService? locationService,
   })  : _repository = repository ?? SearchRepository(),
+        _recommendationsRepository =
+            recommendationsRepository ?? RecommendationsRepository(),
         _locationService = locationService ?? LocationService();
 
   final SearchRepository _repository;
+  final RecommendationsRepository _recommendationsRepository;
   final LocationService _locationService;
   final Debouncer _debouncer = Debouncer(delay: const Duration(milliseconds: 350));
 
   List<Place> results = [];
+  List<Place> recommendedPlaces = []; // 추천 장소 리스트
   List<String> recentKeywords = [];
   bool isLoading = false;
   bool isLocationLoading = false; // 위치 정보 로딩 상태
+  bool isRecommendationsLoading = false; // 추천 로딩 상태
+  bool isExpandingRadius = false; // 반경 확대 중 상태
+  int? currentSearchRadius; // 현재 검색 중인 반경 (km)
   String? error;
+  String? recommendationsError;
   LocationData? _cachedLocation;
   Future<void>? _locationInitializationFuture; // 위치 초기화 Future 캐싱
 
@@ -79,10 +89,75 @@ class SearchController extends ChangeNotifier {
       logInfo('Initializing location...');
       _cachedLocation = await _locationService.getCurrentPosition();
       logInfo('Location initialized: (${_cachedLocation!.latitude}, ${_cachedLocation!.longitude})');
+      
+      // 위치 초기화 후 추천 장소 로드
+      await loadRecommendations();
     } catch (e) {
       logError('Location initialization failed', e.toString());
     } finally {
       isLocationLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 현재 위치 기반 추천 장소 로드 (반경 확대 방식)
+  Future<void> loadRecommendations() async {
+    if (_cachedLocation == null) {
+      return;
+    }
+
+    try {
+      isRecommendationsLoading = true;
+      isExpandingRadius = false;
+      currentSearchRadius = null;
+      recommendationsError = null;
+      notifyListeners();
+
+      logInfo('Loading recommendations at (${_cachedLocation!.latitude}, ${_cachedLocation!.longitude})');
+      
+      final result = await _recommendationsRepository.getRecommendations(
+        lat: _cachedLocation!.latitude,
+        lng: _cachedLocation!.longitude,
+        category: 'cafe', // 기본값: 카페
+        onRadiusChange: (radiusKm) {
+          // 첫 번째 반경(3km) 이후부터는 확대 중 상태로 표시
+          if (radiusKm > 3) {
+            isExpandingRadius = true;
+          }
+          currentSearchRadius = radiusKm;
+          notifyListeners();
+        },
+      );
+
+      switch (result) {
+        case ApiSuccess(data: final data):
+          // 최대 10개까지만 표시
+          recommendedPlaces = data.places.take(10).toList();
+          logInfo('Recommendations loaded: ${recommendedPlaces.length} places');
+          recommendationsError = null;
+          isExpandingRadius = false;
+          currentSearchRadius = null;
+        case ApiFailure(message: final message):
+          logError('Recommendations failed', message);
+          recommendationsError = message;
+          recommendedPlaces = [];
+          isExpandingRadius = false;
+          currentSearchRadius = null;
+        default:
+          logError('Recommendations failed', 'Unknown error');
+          recommendationsError = '알 수 없는 오류가 발생했습니다.';
+          recommendedPlaces = [];
+          isExpandingRadius = false;
+          currentSearchRadius = null;
+      }
+    } catch (e, stackTrace) {
+      logError('Recommendations exception', '$e\n$stackTrace');
+      recommendationsError = '추천 장소를 불러오는 중 오류가 발생했습니다: ${e.toString()}';
+      recommendedPlaces = [];
+      isExpandingRadius = false;
+      currentSearchRadius = null;
+    } finally {
+      isRecommendationsLoading = false;
       notifyListeners();
     }
   }

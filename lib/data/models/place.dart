@@ -8,6 +8,7 @@ class Place {
   final double distanceM;
   final String categoryGroupCode;
   final String imageUrl;
+  final String crowdingLevel; // 혼잡도 레벨 (여유, 보통, 약간 붐빔, 붐빔)
 
   const Place({
     required this.id,
@@ -19,6 +20,7 @@ class Place {
     this.distanceM = 0.0,
     this.categoryGroupCode = '',
     this.imageUrl = '',
+    this.crowdingLevel = '',
   });
 
   factory Place.fromJson(Map<String, dynamic> json) {
@@ -42,6 +44,7 @@ class Place {
       distanceM: ((json['distance_m'] ?? json['distance'] ?? 0) as num).toDouble(),
       categoryGroupCode: safeString(json['category_group_code']),
       imageUrl: safeString(json['image_url']),
+      crowdingLevel: safeString(json['crowding_level'] ?? json['crowdingLevel']),
     );
   }
 

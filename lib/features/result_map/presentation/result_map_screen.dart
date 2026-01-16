@@ -32,10 +32,10 @@ class _DesignTokens {
   
   // Badge colors
   static const Map<String, Map<String, Color>> badgeColors = {
-    '여유': {'bg': Color(0xFFD0F6B9), 'text': Color(0xFE1C9E40)}, 
-    '보통': {'bg': Color(0xFFFFE894), 'text': Color(0xFFF59C00)}, // 원래대로 복구
-    '약간 붐빔': {'bg': Color(0xFFFFF3E0), 'text': Color(0xFFFF6B35)},
-    '붐빔': {'bg': Color(0xFFFFEBEE), 'text': Color(0xFFD32F2F)},
+    '여유': {'bg': Color(0xFFC8E6C9), 'text': Color(0xFF2E7D32)}, // #2E7D32
+    '보통': {'bg': Color(0xFFDCEDC8), 'text': Color(0xFF8BC34A)}, // #8BC34A (lightgreen)
+    '약간 붐빔': {'bg': Color(0xFFFFF9C4), 'text': Color(0xFFFBC02D)}, // #FBC02D (yellow)
+    '붐빔': {'bg': Color(0xFFFFCDD2), 'text': Color(0xFFE53935)}, // #E53935
   };
   
   // Spacing
@@ -1983,14 +1983,15 @@ class _ResultMapScreenState extends State<ResultMapScreen>
         ElevatedButton(
           onPressed: onRetry,
           style: ElevatedButton.styleFrom(
-            backgroundColor: _DesignTokens.primary,
-            foregroundColor: Colors.white,
+            backgroundColor: const Color(0xFFF0EBEB), // 웜화이트 배경 (R240 G235 B235)
+            foregroundColor: const Color(0xFF1A1A1A), // 다크 그레이 텍스트
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
+            elevation: 0,
           ),
-          child: const Text('다시 시도'),
+          child: const Text('다시 시도하기'),
         ),
       ],
     );
