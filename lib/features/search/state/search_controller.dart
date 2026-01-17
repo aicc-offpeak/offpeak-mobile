@@ -189,7 +189,18 @@ class SearchController extends ChangeNotifier {
   }
 
   void search(String keyword) {
-    if (keyword.trim().isEmpty) {
+    final trimmed = keyword.trim();
+    
+    if (trimmed.isEmpty) {
+      results = [];
+      isLoading = false;
+      error = null;
+      notifyListeners();
+      return;
+    }
+
+    // 2자 미만이면 API 호출하지 않음
+    if (trimmed.length < 2) {
       results = [];
       isLoading = false;
       error = null;

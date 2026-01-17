@@ -4,6 +4,9 @@ import '../../../core/constants/routes.dart';
 import '../../../core/utils/brand_icon_mapper.dart';
 import '../../../data/models/place.dart';
 import '../state/search_controller.dart' as search;
+import '../state/station_anchor_controller.dart';
+import '../widgets/autocomplete_panel.dart';
+import '../widgets/location_context_widget.dart';
 import '../widgets/recent_keywords.dart';
 import '../widgets/search_bar.dart';
 
@@ -17,6 +20,7 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final controller = search.SearchController();
+  final _stationAnchorController = StationAnchorController();
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   bool _hasShownRecommendations = false; // 첫 등장 여부 추적
@@ -39,6 +43,7 @@ class _SearchScreenState extends State<SearchScreen>
     WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _stationAnchorController.dispose();
     controller.dispose();
     super.dispose();
   }
@@ -95,34 +100,6 @@ class _SearchScreenState extends State<SearchScreen>
                     ),
                   ),
                 ),
-                // 위치 정보 로딩 중일 때 표시
-                if (controller.isLocationLoading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            backgroundColor: const Color(0xFFE0E0E0), // 트랙 색상
-                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF616161)), // 진행 인디케이터 색상
-                          ),
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          '위치를 확인하고 있어요...',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ],
-                    ),
-                  ),
-                // 검색창 바로 아래 자동완성 리스트 (검색어가 있을 때만 표시)
-                if (_searchController.text.trim().isNotEmpty) 
-                  Expanded(
-                    child: _buildAutocompleteList(),
-                  ),
                 // 검색어가 없을 때만 최근 검색어 표시
                 if (_searchController.text.trim().isEmpty)
                   Expanded(
@@ -145,50 +122,68 @@ class _SearchScreenState extends State<SearchScreen>
                   ),
               ],
             ),
-            // 검색창 (절대 위치)
+            // 검색창과 자동완성 패널 (절대 위치)
             Positioned(
               top: searchBarTop,
               left: (screenSize.width - searchBarWidth) / 2,
-              child: Container(
+              child: SizedBox(
                 width: searchBarWidth,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16.0),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.08),
-                      blurRadius: 12,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  style: const TextStyle(fontSize: 16),
-                  decoration: InputDecoration(
-                    hintText: '스타벅스, 이디야, 맥도날드...',
-                    hintStyle: const TextStyle(
-                      color: Color(0xFF9A9A9A),
-                      fontSize: 16,
-                    ),
-                    prefixIcon: const Padding(
-                      padding: EdgeInsets.only(left: 20.0, right: 12.0),
-                      child: Icon(
-                        Icons.search,
-                        color: Color(0xFF777777),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 검색창
+                    Container(
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16.0),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 12,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        style: const TextStyle(fontSize: 16),
+                        decoration: InputDecoration(
+                          hintText: '스타벅스, 이디야, 맥도날드...',
+                          hintStyle: const TextStyle(
+                            color: Color(0xFF9A9A9A),
+                            fontSize: 16,
+                          ),
+                          prefixIcon: const Padding(
+                            padding: EdgeInsets.only(left: 20.0, right: 12.0),
+                            child: Icon(
+                              Icons.search,
+                              color: Color(0xFF777777),
+                            ),
+                          ),
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16.0,
+                            vertical: 16.0,
+                          ),
+                        ),
                       ),
                     ),
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    filled: false,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16.0,
-                      vertical: 16.0,
+                    // 자동완성 패널 (검색창 아래 8px 간격)
+                    const SizedBox(height: 8),
+                    _buildAutocompletePanelCard(),
+                    // 위치 맥락 문구
+                    const SizedBox(height: 10),
+                    LocationContextWidget(
+                      controller: _stationAnchorController,
+                      isLocationLoading: controller.isLocationLoading,
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
@@ -198,96 +193,61 @@ class _SearchScreenState extends State<SearchScreen>
     );
   }
 
-  Widget _buildAutocompleteList() {
+  /// 자동완성 상태 계산
+  AutocompleteState _getAutocompleteState() {
+    final query = _searchController.text.trim();
+    
+    // 검색어가 비어있으면 표시 안 함
+    if (query.isEmpty) {
+      return AutocompleteState.idle;
+    }
+    
+    // 검색어 길이가 2 미만이면 입력 부족 안내
+    if (query.length < 2) {
+      return AutocompleteState.inputTooShort;
+    }
+    
+    // 로딩 중
     if (controller.isLoading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        child: Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            backgroundColor: Color(0xFFE0E0E0), // 트랙 색상
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF616161)), // 진행 인디케이터 색상
-          ),
-        ),
-      );
+      return AutocompleteState.loading;
     }
-
+    
+    // 오류 발생
     if (controller.error != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        child: Column(
-          children: [
-            Text(
-              '검색 중 오류가 발생했습니다',
-              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              controller.error!,
-              style: const TextStyle(color: Colors.red, fontSize: 12),
-            ),
-          ],
-        ),
-      );
+      return AutocompleteState.error;
     }
-
-    if (controller.results.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        child: Center(
-          child: Text('검색 결과가 없습니다.\n다른 검색어를 시도해보세요.'),
-        ),
-      );
+    
+    // 결과가 있으면 성공
+    if (controller.results.isNotEmpty) {
+      return AutocompleteState.success;
     }
+    
+    // 결과가 없으면 빈 상태
+    return AutocompleteState.empty;
+  }
 
-    // 최대 5개까지만 표시
-    final displayResults = controller.results.take(5).toList();
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+  Widget _buildAutocompletePanelCard() {
+    final state = _getAutocompleteState();
+    
+    // idle 상태면 패널 숨김
+    if (state == AutocompleteState.idle) {
+      return const SizedBox.shrink();
+    }
+    
+    final maxHeight = MediaQuery.of(context).size.height * 0.4;
+    
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: maxHeight,
       ),
-      child: ListView.builder(
-        itemCount: displayResults.length,
-        itemBuilder: (context, index) {
-          final place = displayResults[index];
-          return ListTile(
-            title: Text(place.name),
-            subtitle: Row(
-              children: [
-                if (place.category.isNotEmpty) ...[
-                  Text(
-                    place.category,
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Text(
-                  '${place.distanceM.toStringAsFixed(0)}m',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-            onTap: () {
-              Navigator.pushNamed(
-                context,
-                Routes.resultMap,
-                arguments: place,
-              );
-            },
+      child: AutocompletePanel(
+        state: state,
+        results: controller.results,
+        onPlaceTap: (place) {
+          Navigator.pushNamed(
+            context,
+            Routes.resultMap,
+            arguments: place,
           );
         },
       ),
