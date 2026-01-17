@@ -100,8 +100,110 @@ class SearchController extends ChangeNotifier {
     }
   }
 
+  /// 목업 데이터 생성
+  List<Place> _getMockRecommendations() {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    
+    return [
+      Place(
+        id: 'mock_1',
+        name: '스타벅스 강남점',
+        address: '서울특별시 강남구 테헤란로 123',
+        latitude: 37.4979,
+        longitude: 127.0276,
+        category: '음식점 > 카페 > 커피전문점 > 스타벅스',
+        distanceM: 250.0,
+        categoryGroupCode: 'CE7',
+        imageUrl: '',
+        crowdingLevel: '여유',
+        crowdingUpdatedAt: now - 300, // 5분 전
+      ),
+      Place(
+        id: 'mock_2',
+        name: '이디야커피 역삼점',
+        address: '서울특별시 강남구 역삼동 456',
+        latitude: 37.5000,
+        longitude: 127.0300,
+        category: '음식점 > 카페 > 커피전문점 > 이디야커피',
+        distanceM: 450.0,
+        categoryGroupCode: 'CE7',
+        imageUrl: '',
+        crowdingLevel: '보통',
+        crowdingUpdatedAt: now - 180, // 3분 전
+      ),
+      Place(
+        id: 'mock_3',
+        name: '투썸플레이스 선릉점',
+        address: '서울특별시 강남구 선릉로 789',
+        latitude: 37.5040,
+        longitude: 127.0490,
+        category: '음식점 > 카페 > 커피전문점 > 투썸플레이스',
+        distanceM: 680.0,
+        categoryGroupCode: 'CE7',
+        imageUrl: '',
+        crowdingLevel: '여유',
+        crowdingUpdatedAt: now - 420, // 7분 전
+      ),
+      Place(
+        id: 'mock_4',
+        name: '메가MGC커피 강남대로점',
+        address: '서울특별시 강남구 강남대로 321',
+        latitude: 37.4950,
+        longitude: 127.0250,
+        category: '음식점 > 카페 > 커피전문점 > 메가MGC커피',
+        distanceM: 320.0,
+        categoryGroupCode: 'CE7',
+        imageUrl: '',
+        crowdingLevel: '보통',
+        crowdingUpdatedAt: now - 240, // 4분 전
+      ),
+      Place(
+        id: 'mock_5',
+        name: '할리스커피 강남역점',
+        address: '서울특별시 강남구 강남대로 654',
+        latitude: 37.4980,
+        longitude: 127.0280,
+        category: '음식점 > 카페 > 커피전문점 > 할리스커피',
+        distanceM: 520.0,
+        categoryGroupCode: 'CE7',
+        imageUrl: '',
+        crowdingLevel: '여유',
+        crowdingUpdatedAt: now - 360, // 6분 전
+      ),
+    ];
+  }
+
   /// 현재 위치 기반 추천 장소 로드 (반경 확대 방식)
   Future<void> loadRecommendations() async {
+    // 목업 데이터 사용: API 호출 대신 항상 목업 데이터 반환
+    try {
+      isRecommendationsLoading = true;
+      isExpandingRadius = false;
+      currentSearchRadius = null;
+      recommendationsError = null;
+      notifyListeners();
+
+      // 짧은 딜레이로 로딩 상태 시뮬레이션
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      recommendedPlaces = _getMockRecommendations();
+      logInfo('Mock recommendations loaded: ${recommendedPlaces.length} places');
+      recommendationsError = null;
+      isExpandingRadius = false;
+      currentSearchRadius = null;
+    } catch (e, stackTrace) {
+      logError('Recommendations exception', '$e\n$stackTrace');
+      recommendationsError = '추천 장소를 불러오는 중 오류가 발생했습니다: ${e.toString()}';
+      recommendedPlaces = [];
+      isExpandingRadius = false;
+      currentSearchRadius = null;
+    } finally {
+      isRecommendationsLoading = false;
+      notifyListeners();
+    }
+
+    // 원래 API 호출 코드 (주석 처리)
+    /*
     if (_cachedLocation == null) {
       return;
     }
@@ -160,6 +262,7 @@ class SearchController extends ChangeNotifier {
       isRecommendationsLoading = false;
       notifyListeners();
     }
+    */
   }
 
   /// 디버깅용: 즉시 검색 수행 (debounce 없이)
