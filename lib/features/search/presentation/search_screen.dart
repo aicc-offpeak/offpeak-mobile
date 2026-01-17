@@ -175,10 +175,10 @@ class _SearchScreenState extends State<SearchScreen>
                       ),
                     ),
                     // 자동완성 패널 (검색창 아래 8px 간격)
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
                     _buildAutocompletePanelCard(),
                     // 위치 맥락 문구
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 6),
                     LocationContextWidget(
                       controller: _stationAnchorController,
                       isLocationLoading: controller.isLocationLoading,
@@ -359,7 +359,7 @@ class _SearchScreenState extends State<SearchScreen>
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: Colors.grey[800],
+                  color: Colors.grey[700],
                 ),
                 textAlign: TextAlign.left,
               ),
@@ -570,7 +570,7 @@ class _SearchScreenState extends State<SearchScreen>
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
-                    color: Colors.grey[800],
+                    color: Colors.grey[700],
                   ),
                 ),
                 // 섹션 부제목 (카드 개수에 따라)
@@ -770,7 +770,7 @@ class _SearchScreenState extends State<SearchScreen>
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: Colors.grey[800],
+                  color: Colors.grey[750],
                 ),
                 textAlign: TextAlign.left,
               ),
@@ -821,7 +821,7 @@ class _SearchScreenState extends State<SearchScreen>
                               '지금은 이 근처가 붐비는 편이에요.',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: const Color(0xFF666666),
+                                color: const Color(0xFF777777),
                                 height: 1.6,
                               ),
                               textAlign: TextAlign.center,
@@ -830,7 +830,7 @@ class _SearchScreenState extends State<SearchScreen>
                               '조금 더 기다리거나 검색으로 찾아보세요.',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: const Color(0xFF666666),
+                                color: const Color(0xFF777777),
                                 height: 1.6,
                               ),
                               textAlign: TextAlign.center,
