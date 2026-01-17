@@ -97,7 +97,7 @@ flutter:
     - .env
     - assets/icons/
     - assets/brands/
-    - assets/offpeak_logo.jpg
+    - assets/offpeak_logo.png
     - assets/offpeak_app_icon.png
 
 flutter_launcher_icons:

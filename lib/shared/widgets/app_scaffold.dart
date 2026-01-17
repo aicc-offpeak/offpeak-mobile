@@ -9,11 +9,15 @@ class AppScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('offpeak'),
-        centerTitle: true,
+        toolbarHeight: 0,
         automaticallyImplyLeading: false,
       ),
-      body: SafeArea(child: child),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 16.0),
+          child: child,
+        ),
+      ),
     );
   }
 }

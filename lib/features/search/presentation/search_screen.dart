@@ -15,10 +15,12 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final controller = search.SearchController();
   final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
   bool _hasShownRecommendations = false; // 첫 등장 여부 추적
+  bool _isKeyboardVisible = false; // 키보드 상태
 
   @override
   void initState() {
@@ -26,14 +28,40 @@ class _SearchScreenState extends State<SearchScreen>
     controller.loadRecent();
     controller.initializeLocation();
     _searchController.addListener(_onSearchChanged);
+    _searchFocusNode.addListener(_onFocusChanged);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
+    _searchFocusNode.removeListener(_onFocusChanged);
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
+    _searchFocusNode.dispose();
     controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 키보드 상태 변경 감지
+    final bottomInset = WidgetsBinding.instance.platformDispatcher.views.first.viewInsets.bottom;
+    final keyboardNowVisible = bottomInset > 0;
+    
+    if (keyboardNowVisible != _isKeyboardVisible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && keyboardNowVisible != _isKeyboardVisible) {
+          setState(() {
+            _isKeyboardVisible = keyboardNowVisible;
+          });
+        }
+      });
+    }
+  }
+
+  void _onFocusChanged() {
+    // 포커스 상태 변경은 키보드 상태로 자동 감지되므로 여기서는 처리하지 않음
   }
 
   void _onSearchChanged() {
@@ -45,82 +73,125 @@ class _SearchScreenState extends State<SearchScreen>
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        final screenSize = MediaQuery.of(context).size;
+        final searchBarWidth = screenSize.width * 0.75;
+        final searchBarTop = screenSize.height * 0.20;
+        
+        return Stack(
           children: [
-            // 검색창과 디버그 버튼
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: '가게 검색',
-                        prefixIcon: const Icon(Icons.search),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8.0),
+            // 배경 컨텐츠
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 로고
+                Padding(
+                  padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 72.0, bottom: 18.0),
+                  child: GestureDetector(
+                    onTap: () => _showDebugDialog(context),
+                    child: Image.asset(
+                      'assets/offpeak_logo.png',
+                      height: 47,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+                // 위치 정보 로딩 중일 때 표시
+                if (controller.isLocationLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            backgroundColor: const Color(0xFFE0E0E0), // 트랙 색상
+                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF616161)), // 진행 인디케이터 색상
+                          ),
                         ),
-                        filled: true,
-                        fillColor: Colors.grey[100],
-                      ),
+                        SizedBox(width: 8),
+                        Text(
+                          '위치를 확인하고 있어요...',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  // 디버그 버튼
-                  IconButton(
-                    icon: Icon(
-                      Icons.bug_report,
-                      color: controller.useDebugMode ? Colors.orange : Colors.grey,
-                    ),
-                    onPressed: () => _showDebugDialog(context),
-                    tooltip: '디버그 모드',
+                // 검색창 바로 아래 자동완성 리스트 (검색어가 있을 때만 표시)
+                if (_searchController.text.trim().isNotEmpty) 
+                  Expanded(
+                    child: _buildAutocompleteList(),
                   ),
-                ],
-              ),
+                // 검색어가 없을 때만 최근 검색어 표시
+                if (_searchController.text.trim().isEmpty)
+                  Expanded(
+                    child: RecentKeywords(
+                      keywords: controller.recentKeywords,
+                      onTap: (keyword) {
+                        _searchController.text = keyword;
+                        controller.search(keyword);
+                      },
+                    ),
+                  ),
+                // 하단에 추천 장소 카드뷰 추가 (검색어가 없고 키보드가 닫혀있을 때만 표시)
+                if (_searchController.text.trim().isEmpty && !_isKeyboardVisible)
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: KeyedSubtree(
+                      key: const ValueKey('visible'),
+                      child: _buildRecommendationsSection(),
+                    ),
+                  ),
+              ],
             ),
-            // 위치 정보 로딩 중일 때 표시
-            if (controller.isLocationLoading)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        backgroundColor: const Color(0xFFE0E0E0), // 트랙 색상
-                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF616161)), // 진행 인디케이터 색상
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Text(
-                      '위치 정보를 가져오는 중...',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
+            // 검색창 (절대 위치)
+            Positioned(
+              top: searchBarTop,
+              left: (screenSize.width - searchBarWidth) / 2,
+              child: Container(
+                width: searchBarWidth,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-              ),
-            // 검색창 바로 아래 자동완성 리스트 (검색어가 있을 때만 표시)
-            if (_searchController.text.trim().isNotEmpty) 
-              Expanded(
-                child: _buildAutocompleteList(),
-              ),
-            // 검색어가 없을 때만 최근 검색어 표시
-            if (_searchController.text.trim().isEmpty)
-              Expanded(
-                child: RecentKeywords(
-                  keywords: controller.recentKeywords,
-                  onTap: (keyword) {
-                    _searchController.text = keyword;
-                    controller.search(keyword);
-                  },
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  style: const TextStyle(fontSize: 16),
+                  decoration: InputDecoration(
+                    hintText: '스타벅스, 이디야, 맥도날드...',
+                    hintStyle: const TextStyle(
+                      color: Color(0xFF9A9A9A),
+                      fontSize: 16,
+                    ),
+                    prefixIcon: const Padding(
+                      padding: EdgeInsets.only(left: 20.0, right: 12.0),
+                      child: Icon(
+                        Icons.search,
+                        color: Color(0xFF777777),
+                      ),
+                    ),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    filled: false,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 16.0,
+                    ),
+                  ),
                 ),
               ),
-            // 하단에 추천 장소 카드뷰 추가 (검색어가 없을 때만 표시)
-            if (_searchController.text.trim().isEmpty) _buildRecommendationsSection(),
+            ),
           ],
         );
       },
@@ -306,60 +377,102 @@ class _SearchScreenState extends State<SearchScreen>
 
   Widget _buildErrorCard() {
     return Container(
-      margin: const EdgeInsets.all(16.0),
-      padding: const EdgeInsets.all(20.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.symmetric(vertical: 16.0),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.sentiment_dissatisfied_outlined,
-            size: 48,
-            color: Colors.grey[400]!.withOpacity(0.9),
+          // 구분선
+          Padding(
+            padding: const EdgeInsets.only(top: 80.0, bottom: 0),
+            child: Container(
+              height: 1,
+              color: const Color(0xFFEEEEEE),
+            ),
+          ),
+          // 섹션 제목
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16.0, 20.0, 16.0, 20.0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '지금 근처에서 여유로운 곳',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[800],
+                ),
+                textAlign: TextAlign.left,
+              ),
+            ),
           ),
           const SizedBox(height: 12),
-          const Text(
-            '추천 정보를 불러올 수 없어요',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '네트워크 연결을 확인하고 다시 시도해주세요',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () {
-              controller.loadRecommendations();
+          // 카드가 있을 때와 동일한 높이 유지
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final screenHeight = MediaQuery.of(context).size.height;
+              final cardViewHeight = (screenHeight * 0.25).clamp(200.0, 250.0);
+              
+              return SizedBox(
+                height: cardViewHeight,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 네트워크 연결 끊어짐 아이콘, 노랑계열
+                        Opacity(
+                          opacity: 0.5,
+                          child: Icon(
+                            Icons.wifi_off_outlined,
+                            size: 25,
+                            color: const Color(0xFFFFC107), // 노랑계열
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '추천 정보를 불러올 수 없어요',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF333333),
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '네트워크 연결을 확인하고 다시 시도해주세요',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: const Color(0xFF666666),
+                            height: 1.6,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: () {
+                            controller.loadRecommendations();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF0EBEB), // 웜화이트 배경 (R240 G235 B235)
+                            foregroundColor: const Color(0xFF1A1A1A), // 다크 그레이 텍스트
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: const Text('다시 시도하기'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFF0EBEB), // 웜화이트 배경 (R240 G235 B235)
-              foregroundColor: const Color(0xFF1A1A1A), // 다크 그레이 텍스트
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              elevation: 0,
-            ),
-            child: const Text('다시 시도하기'),
           ),
         ],
       ),
@@ -478,17 +591,25 @@ class _SearchScreenState extends State<SearchScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 구분선
+          Padding(
+            padding: const EdgeInsets.only(top: 80.0, bottom: 0),
+            child: Container(
+              height: 1,
+              color: const Color(0xFFEEEEEE),
+            ),
+          ),
           // Primary 섹션
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            padding: const EdgeInsets.fromLTRB(16.0, 20.0, 16.0, 20.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '지금 덜 붐비는 곳',
+                  '지금 근처에서 여유로운 곳',
                   style: TextStyle(
                     fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w700,
                     color: Colors.grey[800],
                   ),
                 ),
@@ -671,16 +792,24 @@ class _SearchScreenState extends State<SearchScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 구분선
+          Padding(
+            padding: const EdgeInsets.only(top: 80.0, bottom: 0),
+            child: Container(
+              height: 1,
+              color: const Color(0xFFEEEEEE),
+            ),
+          ),
           // 섹션 제목
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            padding: const EdgeInsets.fromLTRB(16.0, 20.0, 16.0, 20.0),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
-                '지금 덜 붐비는 곳',
+                '지금 근처에서 여유로운 곳',
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w700,
                   color: Colors.grey[800],
                 ),
                 textAlign: TextAlign.left,
@@ -704,19 +833,22 @@ class _SearchScreenState extends State<SearchScreen>
                       crossAxisAlignment: CrossAxisAlignment.center,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // 마커 아이콘 중앙 배치, 크기 2.5배 (20px → 50px)
-                        Icon(
-                          Icons.location_on_outlined,
-                          size: 50,
-                          color: Colors.grey[400],
+                        // 마커 아이콘 중앙 배치, 회색 + 반투명
+                        Opacity(
+                          opacity: 0.5,
+                          child: Icon(
+                            Icons.location_on_outlined,
+                            size: 25,
+                            color: const Color(0xFFCCCCCC),
+                          ),
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          '지금은 조건에 맞는 장소가 없어요',
+                          '주변에 여유로운 곳이 없어요',
                           style: TextStyle(
-                            fontSize: 15,
+                            fontSize: 16,
                             fontWeight: FontWeight.w600,
-                            color: Colors.grey[800],
+                            color: const Color(0xFF333333),
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -726,20 +858,20 @@ class _SearchScreenState extends State<SearchScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              '지금 이 근처는 전반적으로 붐비는 편이에요.',
+                              '지금은 이 근처가 붐비는 편이에요.',
                               style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey[600],
-                                height: 1.5,
+                                fontSize: 14,
+                                color: const Color(0xFF666666),
+                                height: 1.6,
                               ),
                               textAlign: TextAlign.center,
                             ),
                             Text(
-                              '시간이 지나면 상황이 달라질 수 있어요.',
+                              '조금 더 기다리거나 검색으로 찾아보세요.',
                               style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.grey[600],
-                                height: 1.5,
+                                fontSize: 14,
+                                color: const Color(0xFF666666),
+                                height: 1.6,
                               ),
                               textAlign: TextAlign.center,
                             ),

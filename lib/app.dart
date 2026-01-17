@@ -17,6 +17,7 @@ class OffPeakApp extends StatelessWidget {
     return MaterialApp(
       title: 'offpeak',
       theme: AppTheme.light,
+      debugShowCheckedModeBanner: false,
       initialRoute: Routes.search,
       onGenerateRoute: (settings) {
         switch (settings.name) {
