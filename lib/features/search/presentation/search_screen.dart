@@ -860,6 +860,9 @@ class _SearchScreenState extends State<SearchScreen>
     
     // 카테고리에서 브랜드 또는 성격 키워드 추출
     final categoryKeyword = _extractCategoryKeyword(place.category);
+    
+    // 브랜드 아이콘 경로 가져오기
+    final brandIconPath = BrandIconMapper.getBrandIconAsset(place.name);
 
     return Container(
       width: isFullWidth ? double.infinity : (isFeatured ? null : 168),
@@ -892,24 +895,56 @@ class _SearchScreenState extends State<SearchScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Line 1: 매장명 + 혼잡도 배지 (오른쪽 inline)
+                // Line 1: 브랜드 아이콘(왼쪽에 원형) + 혼잡도 배지(오른쪽)
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Expanded(
-                      child: Text(
-                        place.name,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          height: 1.2,
+                    // 브랜드 아이콘 (원형)
+                    if (brandIconPath != null)
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.grey[100],
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                        child: ClipOval(
+                          child: Image.asset(
+                            brandIconPath,
+                            width: 32,
+                            height: 32,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                width: 32,
+                                height: 32,
+                                color: Colors.grey[200],
+                                child: Icon(
+                                  Icons.store,
+                                  size: 18,
+                                  color: Colors.grey[400],
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      )
+                    else
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.grey[100],
+                        ),
+                        child: Icon(
+                          Icons.store,
+                          size: 18,
+                          color: Colors.grey[400],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    // 혼잡도 배지 (작게, 보조 신호)
+                    const Spacer(),
+                    // 혼잡도 배지 (오른쪽, 기존 위치 그대로)
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -931,7 +966,19 @@ class _SearchScreenState extends State<SearchScreen>
                   ],
                 ),
                 const SizedBox(height: 8),
-                // Line 2: 도보 시간/거리
+                // Line 2: 가게명
+                Text(
+                  place.name,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    height: 1.2,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 8),
+                // Line 3: 나머지 (도보 시간/거리, 카테고리 키워드)
                 Row(
                   children: [
                     Icon(
@@ -952,7 +999,7 @@ class _SearchScreenState extends State<SearchScreen>
                     ),
                   ],
                 ),
-                // Line 3: 카테고리 키워드 (있는 경우만)
+                // 카테고리 키워드 (있는 경우만)
                 if (categoryKeyword.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
