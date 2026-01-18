@@ -68,7 +68,11 @@ class SearchController extends ChangeNotifier {
   /// 이미 초기화 중이면 기존 Future를 반환하여 중복 호출 방지
   Future<void> initializeLocation() async {
     if (_cachedLocation != null) {
-      return; // 이미 캐시되어 있으면 즉시 반환
+      // 이미 캐시되어 있어도 목업 데이터가 없으면 로드
+      if (recommendedPlaces.isEmpty && !isRecommendationsLoading) {
+        await loadRecommendations();
+      }
+      return;
     }
     
     // 이미 초기화 중이면 기존 Future를 기다림
@@ -83,36 +87,69 @@ class SearchController extends ChangeNotifier {
   }
   
   Future<void> _doInitializeLocation() async {
-    try {
-      isLocationLoading = true;
-      notifyListeners();
-      logInfo('Initializing location...');
-      _cachedLocation = await _locationService.getCurrentPosition();
-      logInfo('Location initialized: (${_cachedLocation!.latitude}, ${_cachedLocation!.longitude})');
-      
-      // 위치 초기화 후 추천 장소 로드
-      await loadRecommendations();
-    } catch (e) {
-      logError('Location initialization failed', e.toString());
-    } finally {
-      isLocationLoading = false;
-      notifyListeners();
-    }
+    // 하드코딩된 좌표 사용 모드: 즉시 완료
+    isLocationLoading = true;
+    notifyListeners();
+    
+    // 짧은 딜레이로 로딩 상태 시뮬레이션 (UI 깜빡임 방지)
+    await Future.delayed(const Duration(milliseconds: 100));
+    
+    // 목업 모드: 항상 고정 위치 사용
+    _cachedLocation = const LocationData(
+      latitude: 37.481519493,
+      longitude: 126.882630605,
+    );
+    logInfo('Location initialized (mock): (${_cachedLocation!.latitude}, ${_cachedLocation!.longitude})');
+    
+    isLocationLoading = false;
+    notifyListeners();
+    
+    // 위치 초기화 후 추천 장소 로드
+    await loadRecommendations();
+    
+    // 원래 코드 (주석 처리)
+    // try {
+    //   isLocationLoading = true;
+    //   notifyListeners();
+    //   logInfo('Initializing location...');
+    //   
+    //   // 실제 위치 가져오기
+    //   _cachedLocation = await _locationService.getCurrentPosition();
+    //   logInfo('Location initialized: (${_cachedLocation!.latitude}, ${_cachedLocation!.longitude})');
+    //   
+    //   // 위치 초기화 후 추천 장소 로드
+    //   await loadRecommendations();
+    // } catch (e) {
+    //   logError('Location initialization failed', e.toString());
+    //   // 에러가 발생해도 고정 위치로 설정하고 목업 데이터 로드
+    //   _cachedLocation = LocationData(
+    //     latitude: 37.481519493,
+    //     longitude: 126.882630605,
+    //   );
+    //   await loadRecommendations();
+    // } finally {
+    //   isLocationLoading = false;
+    //   notifyListeners();
+    // }
   }
 
-  /// 목업 데이터 생성
+  /// 목업 데이터 생성 (가산디지털단지역 기준)
+  /// 가산디지털단지역 좌표: 위도 37.481519493, 경도 126.882630605
   List<Place> _getMockRecommendations() {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    // 가산디지털단지역 기준 좌표
+    const baseLat = 37.481519493;
+    const baseLng = 126.882630605;
     
     return [
       Place(
         id: 'mock_1',
-        name: '스타벅스 강남점',
-        address: '서울특별시 강남구 테헤란로 123',
-        latitude: 37.4979,
-        longitude: 127.0276,
+        name: '스타벅스 가산디지털단지점',
+        address: '서울특별시 금천구 가산디지털1로 145',
+        latitude: baseLat + 0.0005, // 약 50m 북쪽
+        longitude: baseLng + 0.0005, // 약 50m 동쪽
         category: '음식점 > 카페 > 커피전문점 > 스타벅스',
-        distanceM: 250.0,
+        distanceM: 150.0,
         categoryGroupCode: 'CE7',
         imageUrl: '',
         crowdingLevel: '여유',
@@ -120,12 +157,12 @@ class SearchController extends ChangeNotifier {
       ),
       Place(
         id: 'mock_2',
-        name: '이디야커피 역삼점',
-        address: '서울특별시 강남구 역삼동 456',
-        latitude: 37.5000,
-        longitude: 127.0300,
+        name: '이디야커피 가산점',
+        address: '서울특별시 금천구 가산디지털1로 167',
+        latitude: baseLat + 0.0010, // 약 100m 북쪽
+        longitude: baseLng + 0.0010, // 약 100m 동쪽
         category: '음식점 > 카페 > 커피전문점 > 이디야커피',
-        distanceM: 450.0,
+        distanceM: 250.0,
         categoryGroupCode: 'CE7',
         imageUrl: '',
         crowdingLevel: '보통',
@@ -133,12 +170,12 @@ class SearchController extends ChangeNotifier {
       ),
       Place(
         id: 'mock_3',
-        name: '투썸플레이스 선릉점',
-        address: '서울특별시 강남구 선릉로 789',
-        latitude: 37.5040,
-        longitude: 127.0490,
+        name: '투썸플레이스 가산점',
+        address: '서울특별시 금천구 가산디지털1로 189',
+        latitude: baseLat + 0.0015, // 약 150m 북쪽
+        longitude: baseLng + 0.0015, // 약 150m 동쪽
         category: '음식점 > 카페 > 커피전문점 > 투썸플레이스',
-        distanceM: 680.0,
+        distanceM: 350.0,
         categoryGroupCode: 'CE7',
         imageUrl: '',
         crowdingLevel: '여유',
@@ -146,12 +183,12 @@ class SearchController extends ChangeNotifier {
       ),
       Place(
         id: 'mock_4',
-        name: '메가MGC커피 강남대로점',
-        address: '서울특별시 강남구 강남대로 321',
-        latitude: 37.4950,
-        longitude: 127.0250,
+        name: '메가MGC커피 가산디지털단지역점',
+        address: '서울특별시 금천구 가산디지털1로 123',
+        latitude: baseLat - 0.0005, // 약 50m 남쪽
+        longitude: baseLng - 0.0005, // 약 50m 서쪽
         category: '음식점 > 카페 > 커피전문점 > 메가MGC커피',
-        distanceM: 320.0,
+        distanceM: 200.0,
         categoryGroupCode: 'CE7',
         imageUrl: '',
         crowdingLevel: '보통',
@@ -159,12 +196,12 @@ class SearchController extends ChangeNotifier {
       ),
       Place(
         id: 'mock_5',
-        name: '할리스커피 강남역점',
-        address: '서울특별시 강남구 강남대로 654',
-        latitude: 37.4980,
-        longitude: 127.0280,
+        name: '할리스커피 가산점',
+        address: '서울특별시 금천구 가산디지털1로 201',
+        latitude: baseLat + 0.0020, // 약 200m 북쪽
+        longitude: baseLng + 0.0020, // 약 200m 동쪽
         category: '음식점 > 카페 > 커피전문점 > 할리스커피',
-        distanceM: 520.0,
+        distanceM: 450.0,
         categoryGroupCode: 'CE7',
         imageUrl: '',
         crowdingLevel: '여유',

@@ -386,24 +386,35 @@ class _MapViewState extends State<MapView> {
         }).catchError((e) {
           debugPrint('[MapView] POI 업데이트 에러: $e');
         });
+        // 동심원 가이드 초기화
+        _initializeUserRings();
+        
         // 지도 준비 완료 후 현재 위치를 가져와서 POI 추가
         _loadInitialUserLocation().catchError((e) {
           debugPrint('[MapView] 초기 사용자 위치 로드 에러: $e');
         });
         debugPrint('[MapView] POI 추가 순서 보장 완료');
         
-        // 동심원 가이드 초기화
-        _initializeUserRings();
+        // selectedPlace가 없고 _currentPosition이 있으면 하드코딩된 위치일 수 있으므로 동심원 표시
+        if (widget.selectedPlace == null && _currentPosition != null) {
+          // 약간의 지연 후 동심원 표시 (초기화 완료 대기)
+          Future.delayed(const Duration(milliseconds: 800), () {
+            if (mounted && _isMapReady && _controller != null && _ringsInitialized) {
+              final isHardcoded = _currentPosition!.latitude == 37.5665 && 
+                                  _currentPosition!.longitude == 126.9780;
+              debugPrint('[MapView] 하드코딩된 위치에 동심원 표시 시도: $_currentPosition, 하드코딩=$isHardcoded');
+              _updateUserRings(_currentPosition, forceUpdate: true);
+            }
+          });
+        }
       },
       onCameraMoveEnd: (cameraPosition, zoomLevel) {
         debugPrint('[MapView] 카메라 이동 완료: $cameraPosition, zoom: $zoomLevel');
         // 카메라 이동은 기본 지도 동작에 맡기고, POI는 지도 엔진이 자동으로 따라감
-        // 줌 레벨 업데이트 및 100m 링 show/hide 처리
-        // zoomLevel은 GestureType이므로 cameraPosition에서 zoomLevel을 가져옴
+        // 줌 레벨 업데이트 (동심원은 항상 표시되므로 줌 레벨에 따른 숨김 처리 불필요)
         final newZoomLevel = cameraPosition.zoomLevel.toDouble();
         if (_currentZoomLevel != newZoomLevel) {
           _currentZoomLevel = newZoomLevel;
-          _updateRingVisibilityByZoom();
         }
       },
     );
@@ -626,6 +637,26 @@ class _MapViewState extends State<MapView> {
       return;
     }
 
+    // 하드코딩된 위치(서울 좌표)인지 확인
+    final isHardcodedLocation = _currentPosition != null &&
+        _currentPosition!.latitude == 37.5665 &&
+        _currentPosition!.longitude == 126.9780;
+
+    // 하드코딩된 위치라면 먼저 동심원 표시
+    if (isHardcodedLocation && _currentPosition != null) {
+      debugPrint('[MapView] 하드코딩된 위치 감지, 동심원 표시: $_currentPosition');
+      final locationLatLng = _currentPosition!;
+      _lastUserLocationPoiPosition = locationLatLng;
+      _lastUserLocationUpdateTime = DateTime.now();
+      _lastRingsUpdatePosition = null; // throttle 초기화
+      _lastRingsUpdateTime = null; // throttle 초기화
+      await _updateUserLocationPoi(locationLatLng);
+      // 하드코딩된 위치에 대해서는 forceUpdate로 동심원 표시
+      await _updateUserRings(locationLatLng, forceUpdate: true);
+      debugPrint('[MapView] ✅ 하드코딩된 위치 POI 및 동심원 추가 완료');
+      return; // 하드코딩된 위치를 사용하므로 위치 서비스 호출하지 않음
+    }
+
     try {
       debugPrint('[MapView] 초기 사용자 위치 가져오는 중...');
       final location = await _locationService.getCurrentPosition();
@@ -636,11 +667,26 @@ class _MapViewState extends State<MapView> {
       // 초기 위치는 throttle 없이 바로 추가
       _lastUserLocationPoiPosition = locationLatLng;
       _lastUserLocationUpdateTime = DateTime.now();
+      _lastRingsUpdatePosition = null; // throttle 초기화
+      _lastRingsUpdateTime = null; // throttle 초기화
       await _updateUserLocationPoi(locationLatLng);
       debugPrint('[MapView] ✅ 초기 사용자 위치 POI 추가 완료');
     } catch (e) {
       debugPrint('[MapView] ❌ 초기 사용자 위치 로드 실패: $e');
       debugPrint('[MapView] 위치 권한을 확인하거나 위치 서비스를 활성화하세요.');
+      
+      // 위치 가져오기 실패 시 하드코딩된 위치(또는 _currentPosition)에 대해 동심원 표시
+      if (!mounted) return;
+      if (_currentPosition != null) {
+        debugPrint('[MapView] 위치 서비스 실패, _currentPosition에 동심원 표시: $_currentPosition');
+        final locationLatLng = _currentPosition!;
+        _lastUserLocationPoiPosition = locationLatLng;
+        _lastUserLocationUpdateTime = DateTime.now();
+        _lastRingsUpdatePosition = null; // throttle 초기화
+        _lastRingsUpdateTime = null; // throttle 초기화
+        await _updateUserLocationPoi(locationLatLng);
+        debugPrint('[MapView] ✅ 위치 서비스 실패 후 _currentPosition POI 및 동심원 추가 완료');
+      }
     }
   }
 
@@ -824,78 +870,135 @@ class _MapViewState extends State<MapView> {
 
   /// 동심원 가이드 업데이트 (사용자 위치 변경 시)
   /// 플러그인의 MethodChannel을 통해 updateUserRings 호출
-  Future<void> _updateUserRings(LatLng? userLocation) async {
+  Future<void> _updateUserRings(LatLng? userLocation, {bool forceUpdate = false}) async {
     if (!_isMapReady || _controller == null || !_ringsInitialized) {
+      debugPrint('[MapView] 동심원 업데이트 스킵: 지도 준비 안됨 (isMapReady=$_isMapReady, controller=${_controller != null}, ringsInitialized=$_ringsInitialized)');
       return;
     }
 
     // 사용자 위치가 없으면 모든 링 숨김
     if (userLocation == null) {
       try {
-        // 플러그인 channel을 통해 hideAllRings 호출
-        await (_controller as dynamic).channel.invokeMethod('hideAllRings');
+        // 방법 1: controller의 channel 속성 사용
+        try {
+          final channel = (_controller as dynamic).channel;
+          if (channel != null) {
+            await channel.invokeMethod('hideAllRings');
+            debugPrint('[MapView] ✅ 링 숨김 완료 (방법 1)');
+            return;
+          }
+        } catch (_) {}
+
+        // 방법 2: MethodChannel 직접 생성
+        final MethodChannel channel = MethodChannel('kr.yhs.flutter_kakao_maps/kakao_map');
+        await channel.invokeMethod('hideAllRings');
+        debugPrint('[MapView] ✅ 링 숨김 완료 (방법 2)');
       } catch (e) {
         debugPrint('[MapView] ❌ 링 숨김 실패: $e');
       }
       return;
     }
 
-    // Throttle 체크: 최소 300ms 간격 또는 2m 이상 이동
-    final now = DateTime.now();
-    if (_lastRingsUpdateTime != null) {
-      final timeDiff = now.difference(_lastRingsUpdateTime!);
-      if (timeDiff.inMilliseconds < 300) {
-        return; // 너무 빨리 업데이트 요청이 들어오면 스킵
-      }
-    }
+    // 하드코딩된 위치(서울 좌표)인지 확인
+    final isHardcodedLocation = userLocation.latitude == 37.5665 && 
+                                userLocation.longitude == 126.9780;
 
-    if (_lastRingsUpdatePosition != null) {
-      final distance = _calculateDistance(
-        _lastRingsUpdatePosition!.latitude,
-        _lastRingsUpdatePosition!.longitude,
-        userLocation.latitude,
-        userLocation.longitude,
-      );
-      if (distance < 2.0) {
-        return; // 2m 미만 이동이면 스킵
+    // Throttle 체크: forceUpdate가 true이거나 하드코딩된 위치가 아니면 체크
+    if (!forceUpdate && !isHardcodedLocation) {
+      final now = DateTime.now();
+      if (_lastRingsUpdateTime != null) {
+        final timeDiff = now.difference(_lastRingsUpdateTime!);
+        if (timeDiff.inMilliseconds < 300) {
+          return; // 너무 빨리 업데이트 요청이 들어오면 스킵
+        }
+      }
+
+      if (_lastRingsUpdatePosition != null) {
+        final distance = _calculateDistance(
+          _lastRingsUpdatePosition!.latitude,
+          _lastRingsUpdatePosition!.longitude,
+          userLocation.latitude,
+          userLocation.longitude,
+        );
+        if (distance < 2.0) {
+          return; // 2m 미만 이동이면 스킵
+        }
       }
     }
 
     // 업데이트 시간 및 위치 저장
-    _lastRingsUpdateTime = now;
+    _lastRingsUpdateTime = DateTime.now();
     _lastRingsUpdatePosition = userLocation;
 
     try {
-      // 플러그인 channel을 통해 동심원 업데이트
-      // 플러그인 코드 수정 후 동작함
-      await (_controller as dynamic).channel.invokeMethod('updateUserRings', {
-        'latitude': userLocation.latitude,
-        'longitude': userLocation.longitude,
-        'zoomLevel': _currentZoomLevel,
-      });
+      debugPrint('[MapView] 동심원 업데이트 요청: ${userLocation.latitude}, ${userLocation.longitude}, 하드코딩=${isHardcodedLocation}');
+      debugPrint('[MapView] controller 타입: ${_controller.runtimeType}');
+      
+      // 방법 1: controller의 channel 속성 사용
+      try {
+        final channel = (_controller as dynamic).channel;
+        if (channel != null) {
+          debugPrint('[MapView] 방법 1 시도: controller.channel 사용');
+          final result = await channel.invokeMethod('updateUserRings', {
+            'latitude': userLocation.latitude,
+            'longitude': userLocation.longitude,
+            'zoomLevel': _currentZoomLevel,
+          });
+          debugPrint('[MapView] ✅ 동심원 가이드 업데이트 완료 (방법 1): result=$result');
+          return;
+        }
+      } catch (e1) {
+        debugPrint('[MapView] 방법 1 실패: $e1');
+      }
 
-      debugPrint('[MapView] ✅ 동심원 가이드 업데이트 완료: ${userLocation.latitude}, ${userLocation.longitude}');
-    } catch (e) {
-      debugPrint('[MapView] ❌ 동심원 가이드 업데이트 실패: $e');
+      // 방법 2: MethodChannel 직접 생성 (여러 채널 이름 시도)
+      final channelNames = [
+        'kr.yhs.flutter_kakao_maps/kakao_map',
+        'kr.yhs.flutter_kakao_maps',
+        'kakao_map_sdk',
+      ];
+
+      for (final channelName in channelNames) {
+        try {
+          debugPrint('[MapView] 방법 2 시도: MethodChannel 직접 생성 ($channelName)');
+          final MethodChannel channel = MethodChannel(channelName);
+          final result = await channel.invokeMethod('updateUserRings', {
+            'latitude': userLocation.latitude,
+            'longitude': userLocation.longitude,
+            'zoomLevel': _currentZoomLevel,
+          });
+          debugPrint('[MapView] ✅ 동심원 가이드 업데이트 완료 (방법 2, $channelName): result=$result');
+          return;
+        } catch (e2) {
+          debugPrint('[MapView] 방법 2 실패 ($channelName): $e2');
+        }
+      }
+
+      // 방법 3: controller를 Map으로 캐스팅하여 시도
+      try {
+        debugPrint('[MapView] 방법 3 시도: controller를 Map으로 캐스팅');
+        final controllerMap = _controller as Map<String, dynamic>;
+        final channel = controllerMap['channel'];
+        if (channel != null) {
+          final result = await channel.invokeMethod('updateUserRings', {
+            'latitude': userLocation.latitude,
+            'longitude': userLocation.longitude,
+            'zoomLevel': _currentZoomLevel,
+          });
+          debugPrint('[MapView] ✅ 동심원 가이드 업데이트 완료 (방법 3): result=$result');
+          return;
+        }
+      } catch (e3) {
+        debugPrint('[MapView] 방법 3 실패: $e3');
+      }
+
+      debugPrint('[MapView] ❌ 모든 방법 실패');
+    } catch (e, stackTrace) {
+      debugPrint('[MapView] ❌ 동심원 가이드 업데이트 최종 실패: $e');
+      debugPrint('[MapView] 스택 트레이스: $stackTrace');
     }
   }
 
-  /// 줌 레벨에 따라 100m 링 show/hide
-  void _updateRingVisibilityByZoom() {
-    if (!_ringsInitialized || _controller == null) {
-      return;
-    }
-
-    try {
-      // 플러그인 channel을 통해 줌 레벨 업데이트
-      // 플러그인 코드 수정 후 동작함
-      (_controller as dynamic).channel.invokeMethod('updateZoomLevel', {
-        'zoomLevel': _currentZoomLevel,
-      });
-    } catch (e) {
-      debugPrint('[MapView] ❌ 줌 레벨 업데이트 실패: $e');
-    }
-  }
 
   @override
   void dispose() {
@@ -978,9 +1081,21 @@ class _MapViewState extends State<MapView> {
       try {
         // dispose는 동기 메서드이므로 await 사용 불가
         // 비동기 정리는 Future로 처리
-        // 플러그인 channel을 통해 disposeUserRings 호출
-        (_controller as dynamic).channel.invokeMethod('disposeUserRings').catchError((e) {
-          debugPrint('[MapView] 동심원 가이드 정리 실패: $e');
+        // 방법 1: controller의 channel 속성 사용
+        try {
+          final channel = (_controller as dynamic).channel;
+          if (channel != null) {
+            channel.invokeMethod('disposeUserRings').catchError((e) {
+              debugPrint('[MapView] 동심원 가이드 정리 실패 (방법 1): $e');
+            });
+            return;
+          }
+        } catch (_) {}
+
+        // 방법 2: MethodChannel 직접 생성
+        final MethodChannel channel = MethodChannel('kr.yhs.flutter_kakao_maps/kakao_map');
+        channel.invokeMethod('disposeUserRings').catchError((e) {
+          debugPrint('[MapView] 동심원 가이드 정리 실패 (방법 2): $e');
         });
       } catch (e) {
         debugPrint('[MapView] 동심원 가이드 정리 실패: $e');

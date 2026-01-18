@@ -118,7 +118,7 @@ class _LocationContextWidgetState extends State<LocationContextWidget> {
       key: key,
       padding: const EdgeInsets.only(top: 10.0),
       child: const Text(
-        '지금 있는 곳 근처에서 보고 있어요',
+        '가산디지털단지역 근처에서 보고 있어요',
         style: TextStyle(
           fontSize: 13,
           color: Color(0xFF777777),

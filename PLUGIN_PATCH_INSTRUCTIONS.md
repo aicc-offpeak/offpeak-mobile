@@ -48,8 +48,9 @@ import com.kakao.vectormap.label.VectorLayerPass
   private var shapeManager: ShapeManager? = null
   private var userRingsLayer: ShapeLayer? = null
   private var ring10m: Polygon? = null
-  private var ring50m: Polygon? = null
   private var ring100m: Polygon? = null
+  private var ring300m: Polygon? = null
+  private var ring500m: Polygon? = null
 ```
 
 **1-3. onMapReady 메서드 수정 (line 219 근처)**
@@ -100,18 +101,6 @@ import com.kakao.vectormap.label.VectorLayerPass
     )
     ring10m = layer.addPolygon(circle10mOptions)
     
-    // 50m 원형 Polygon 생성 (선만, 알파 0.55, 두께 2px)
-    val circle50mOptions = PolygonOptions.from(
-      DotPoints.fromCircle(center, 50.0)
-    ).setStylesSet(
-      PolygonStylesSet.from(
-        PolygonStyles.from(android.graphics.Color.TRANSPARENT)
-          .setStrokeColor(android.graphics.Color.parseColor("#8C2196F3"))
-          .setStrokeWidth(2)
-      )
-    )
-    ring50m = layer.addPolygon(circle50mOptions)
-    
     // 100m 원형 Polygon 생성 (선만, 알파 0.35, 두께 2px)
     val circle100mOptions = PolygonOptions.from(
       DotPoints.fromCircle(center, 100.0)
@@ -124,33 +113,48 @@ import com.kakao.vectormap.label.VectorLayerPass
     )
     ring100m = layer.addPolygon(circle100mOptions)
     
-    // 줌 레벨에 따라 100m 링 show/hide
-    updateRingVisibilityByZoom(zoomLevel)
-  }
-  
-  private fun updateRingVisibilityByZoom(zoomLevel: Double) {
-    val ring = ring100m ?: return
-    if (zoomLevel > 15.0) {
-      ring.show()
-    } else {
-      ring.hide()
-    }
+    // 300m 원형 Polygon 생성 (선만, 알파 0.35, 두께 2px)
+    val circle300mOptions = PolygonOptions.from(
+      DotPoints.fromCircle(center, 300.0)
+    ).setStylesSet(
+      PolygonStylesSet.from(
+        PolygonStyles.from(android.graphics.Color.TRANSPARENT)
+          .setStrokeColor(android.graphics.Color.parseColor("#592196F3"))
+          .setStrokeWidth(2)
+      )
+    )
+    ring300m = layer.addPolygon(circle300mOptions)
+    
+    // 500m 원형 Polygon 생성 (선만, 알파 0.35, 두께 2px)
+    val circle500mOptions = PolygonOptions.from(
+      DotPoints.fromCircle(center, 500.0)
+    ).setStylesSet(
+      PolygonStylesSet.from(
+        PolygonStyles.from(android.graphics.Color.TRANSPARENT)
+          .setStrokeColor(android.graphics.Color.parseColor("#592196F3"))
+          .setStrokeWidth(2)
+      )
+    )
+    ring500m = layer.addPolygon(circle500mOptions)
   }
   
   private fun hideAllRings() {
     ring10m?.hide()
-    ring50m?.hide()
     ring100m?.hide()
+    ring300m?.hide()
+    ring500m?.hide()
   }
   
   private fun removeAllRings() {
     val layer = userRingsLayer ?: return
     ring10m?.let { layer.removePolygon(it) }
-    ring50m?.let { layer.removePolygon(it) }
     ring100m?.let { layer.removePolygon(it) }
+    ring300m?.let { layer.removePolygon(it) }
+    ring500m?.let { layer.removePolygon(it) }
     ring10m = null
-    ring50m = null
     ring100m = null
+    ring300m = null
+    ring500m = null
   }
 ```
 
@@ -168,11 +172,6 @@ import com.kakao.vectormap.label.VectorLayerPass
         val zoomLevel = arguments?.get("zoomLevel")?.asDouble() ?: 16.0
         updateUserRings(LatLng.from(latitude, longitude), zoomLevel, result::success)
       }
-      "updateZoomLevel" -> {
-        val arguments = call.arguments?.asMap<Any?>()
-        val zoomLevel = arguments?.get("zoomLevel")?.asDouble() ?: 16.0
-        updateZoomLevel(zoomLevel, result::success)
-      }
       "hideAllRings" -> hideAllRings(result::success)
       "disposeUserRings" -> disposeUserRings(result::success)
       else -> result.notImplemented()
@@ -183,7 +182,6 @@ import com.kakao.vectormap.label.VectorLayerPass
   fun finish(onSuccess: (Any?) -> Unit)
   
   fun updateUserRings(center: LatLng, zoomLevel: Double, onSuccess: (Any?) -> Unit)
-  fun updateZoomLevel(zoomLevel: Double, onSuccess: (Any?) -> Unit)
   fun hideAllRings(onSuccess: (Any?) -> Unit)
   fun disposeUserRings(onSuccess: (Any?) -> Unit)
 }
@@ -193,11 +191,6 @@ import com.kakao.vectormap.label.VectorLayerPass
 ```kotlin
   override fun updateUserRings(center: LatLng, zoomLevel: Double, onSuccess: (Any?) -> Unit) {
     updateUserRings(center, zoomLevel)
-    onSuccess(null)
-  }
-  
-  override fun updateZoomLevel(zoomLevel: Double, onSuccess: (Any?) -> Unit) {
-    updateRingVisibilityByZoom(zoomLevel)
     onSuccess(null)
   }
   
@@ -218,10 +211,11 @@ import com.kakao.vectormap.label.VectorLayerPass
 ## Flutter 코드
 
 Flutter 코드는 이미 준비되어 있습니다. `map_view.dart`에서 다음 메서드들을 호출합니다:
-- `updateUserRings(latitude, longitude, zoomLevel)`
-- `updateZoomLevel(zoomLevel)`
-- `hideAllRings()`
-- `disposeUserRings()`
+- `updateUserRings(latitude, longitude, zoomLevel)` - 10m, 100m, 300m, 500m 원 그리기
+- `hideAllRings()` - 모든 원 숨기기
+- `disposeUserRings()` - 모든 원 제거
+
+**참고**: 줌 레벨에 따른 숨김 기능은 제거되었습니다. 모든 원이 항상 표시됩니다.
 
 ## 테스트
 
