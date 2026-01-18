@@ -91,14 +91,19 @@ class _SearchScreenState extends State<SearchScreen>
                 // 로고
                 Padding(
                   padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 72.0, bottom: 18.0),
-                  child: GestureDetector(
-                    onTap: () => _showDebugDialog(context),
-                    child: Image.asset(
-                      'assets/offpeak_logo.png',
-                      height: 47,
-                      fit: BoxFit.contain,
-                    ),
+                  child: Image.asset(
+                    'assets/offpeak_logo.png',
+                    height: 47,
+                    fit: BoxFit.contain,
                   ),
+                  // child: GestureDetector(
+                  //   onTap: () => _showDebugDialog(context),
+                  //   child: Image.asset(
+                  //     'assets/offpeak_logo.png',
+                  //     height: 47,
+                  //     fit: BoxFit.contain,
+                  //   ),
+                  // ),
                 ),
                 // 검색어가 없을 때만 최근 검색어 표시
                 if (_searchController.text.trim().isEmpty)
