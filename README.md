@@ -1,23 +1,29 @@
-# offpeak_mobile
+# OffPeak Mobile
 
-A new Flutter project.
+사용자 현재 위치를 기준으로 덜 붐비는 카페와 음식점을 추천하는 위치기반 모바일 서비스입니다.  
+카카오맵 API를 활용해 주변 장소를 지도에서 확인할 수 있으며, 혼잡도 정보와 장소 정보를 함께 제공해 사용자가 더 빠르게 비교·탐색할 수 있도록 구성했습니다.
 
-## Getting Started
+## 주요 기능
+- 현재 위치 기반 주변 카페·음식점 추천
+- 카카오맵 기반 장소 표시 및 마커 구성
+- 장소 정보 및 혼잡도 데이터 표시
+- 상태에 따른 UI 전환 및 정보 패널 제공
 
-This project is a starting point for a Flutter application.
+## 담당 역할
+- 프론트엔드 구현 주도
+- 카카오맵 API 연동
+- UI/UX 및 사용자 흐름 설계
+- 백엔드 API 연동 및 화면 데이터 반영
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 기술 스택
+- Flutter
+- Dart
+- Kakao Map API
+- REST API 연동
+- 
+────────────────────────────
 
 ## 개발환경에서 빌드 및 실행 방법
-
-────────────────────────────
 
 1. 레포 클론
    원격 저장소를 로컬로 내려받고 프로젝트 디렉터리로 이동합니다.
